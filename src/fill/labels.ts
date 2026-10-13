@@ -28,6 +28,9 @@ export function isWeakLabel(label: string): boolean {
   return WEAK_LABELS.has(cleanLabel(label))
 }
 
+/** Raised when groups are added to DEFAULT_SYNONYMS, so saved lists get them once (see withNewDefaults). */
+export const SYNONYMS_VERSION = 2
+
 /**
  * Synonym groups that ship with the clipper, for the stat blocks and infoboxes people clip most.
  * Each line is one group; any label in a group matches any other. They are a starting point you
@@ -47,6 +50,11 @@ export const DEFAULT_SYNONYMS: string[][] = [
   ['Immunities', 'Damage Immunities'],
   ['Vulnerabilities', 'Damage Vulnerabilities'],
   ['Saving Throws', 'Saves'],
+  ['Proficiency Bonus', 'PB'],
+  ['Condition Immunities', 'Condition Immunity'],
+  ['Bonus Actions', 'Bonus Action'],
+  ['Legendary Actions', 'Legendary Action'],
+  ['Lair Actions', 'Lair Action'],
   ['Hit Point Die', 'Hit Dice', 'Hit Die'],
   ['Casting Time', 'Cast Time'],
   ['Range/Area', 'Range', 'Area'],
@@ -95,6 +103,11 @@ export class Synonyms {
 
   of(key: string): Set<string> {
     return this.map.get(key) ?? new Set()
+  }
+
+  /** Every label in the list, cleaned. */
+  labels(): string[] {
+    return [...this.map.keys()]
   }
 
   /** The label and all its synonyms, cleaned. */

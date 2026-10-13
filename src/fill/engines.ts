@@ -29,7 +29,7 @@ export async function suggest(
   engine: AiEngine,
   input: AiInput,
   signal?: AbortSignal,
-): Promise<{ suggestions: Map<string, AiSuggestion>; truncated: boolean; job?: AiJob }> {
+): Promise<{ suggestions: Map<string, AiSuggestion>; truncated: boolean; job?: AiJob; raw?: string }> {
   let maxChars = engine.maxChars
   let malformed = 0
   for (;;) {
@@ -37,7 +37,7 @@ export async function suggest(
     if (!job) return { suggestions: new Map(), truncated: false }
     try {
       const raw = await engine.run(job, signal)
-      return { suggestions: parseAiAnswer(job, raw), truncated: job.truncated, job }
+      return { suggestions: parseAiAnswer(job, raw), truncated: job.truncated, job, raw }
     } catch (error) {
       if (error instanceof AiAnswerError && malformed++ === 0) continue
       if (isQuotaError(error) && maxChars > 2000) {

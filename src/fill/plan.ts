@@ -1,7 +1,8 @@
 import type { Block, Run } from '@legendkeeper/sdk/blocks'
 import { extractCandidates, leftoverBlocks, overlaps, type Candidate, type Extraction } from './candidates.js'
+import { deriveValue, type DerivedRule } from './derived.js'
 import { cleanLabel, compareLabels, LabelMatch, type Synonyms } from './labels.js'
-import { blockText, blocksToRuns, buildSlots, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
+import { blockText, blocksToRuns, buildSlots, runsText, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
 /**
  * Decides what goes in each slot of a template: saved rules, then label matching, then the AI's
@@ -32,13 +33,13 @@ export interface SlotOverride {
   remember?: boolean
 }
 
-/** What the AI said about one slot: clip block numbers (0-based, top level) or a short value. */
+/** What the AI said about one slot: clip block numbers (0-based, top level), a short copied value, or both. */
 export interface AiSuggestion {
   blocks: number[]
   value: string
 }
 
-export type SlotOrigin = 'rule' | 'label' | 'synonym' | 'similar' | 'ai' | 'ai-written' | 'manual' | 'typed' | 'title'
+export type SlotOrigin = 'rule' | 'label' | 'synonym' | 'similar' | 'ai' | 'ai-written' | 'derived' | 'manual' | 'typed' | 'title'
 
 export interface SlotState {
   slot: Slot
@@ -51,6 +52,13 @@ export interface SlotState {
   options: Candidate[]
   /** For an ambiguous slot: the equally good candidates. */
   contenders: Candidate[]
+  /**
+   * Why an AI suggestion was left unticked: it disagrees with the clip's own structure ("The clip
+   * labels this “Saving Throws”, not “Legendary Actions”").
+   */
+  warning?: string
+  /** Where a worked-out value came from ("From Dexterity: 16 (+3)"). */
+  note?: string
 }
 
 export interface FillInput {
@@ -68,6 +76,16 @@ export interface FillInput {
   overrides: Record<string, SlotOverride>
   /** Page names for mentions in the clip (the linker's mentions carry only an id). */
   nameOf?: (resourceId: string) => string | undefined
+  /** Fields worked out from other fields when nothing fills them (Initiative from Dexterity). */
+  derived?: DerivedRule[]
+}
+
+/** What the clip itself says about a top-level block: the labels in it and the heading it is under. */
+export interface BlockLabels {
+  /** Field labels in the block ("Saving Throws"), not entry names ("Multiattack."). */
+  labels: string[]
+  /** The nearest heading or label line the block is under ("Traits"), apart from the page name. */
+  under?: string
 }
 
 export interface FillPlan {
@@ -80,6 +98,10 @@ export interface FillPlan {
   fills: Map<string, SlotFill>
   /** Top-level clip blocks not used by any slot, for the AI. */
   unusedBlockIndexes: number[]
+  /** By top-level block index, for the AI's prompt and for checking its answer. */
+  blockLabels: Map<number, BlockLabels>
+  /** Blocks that only repeat the page's name, which no field takes. */
+  titleBlocks: number[]
 }
 
 const ORIGIN_OF: Record<LabelMatch, SlotOrigin> = {
@@ -113,9 +135,11 @@ export function planFill(input: FillInput): FillPlan {
 function plan(input: FillInput): FillPlan {
   const slots = buildSlots(input.tree)
   const siteRules = input.rules.filter((r) => r.site === input.site && r.templateId === input.templateId)
-  const extraction = extractCandidates(input.clip, { knownLabels: knownLabels(slots, input.synonyms, siteRules) })
-  const aiCandidates = input.ai ? suggestionsToCandidates(input.ai, input.clip) : new Map<string, Candidate>()
-  const candidates = [...extraction.candidates, ...aiCandidates.values()]
+  const extraction = extractCandidates(input.clip, { knownLabels: knownLabels(slots, input.synonyms, siteRules), vocabulary: input.synonyms.labels() })
+  const titleKey = comparable(input.title)
+  const blockLabels = labelBlocks(input.clip, extraction, cleanLabel(input.title))
+  const aiCandidates = input.ai ? suggestionsToCandidates(input.ai, input.clip, input.title) : new Map<string, Candidate[]>()
+  const candidates = [...extraction.candidates, ...[...aiCandidates.values()].flat()]
   const byId = new Map(candidates.map((c) => [c.id, c]))
 
   const states = new Map<string, SlotState>()
@@ -135,6 +159,41 @@ function plan(input: FillInput): FillPlan {
     return { ...c, blocks, units: [c.units[0]!, ...c.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
   }
   const free = (c: Candidate) => available(c) !== undefined
+  /**
+   * The AI decides where content goes; the clip's own labels decide what the value is. When the
+   * AI picks a labelled line or a section for a field with that label ("Armor Class 15 (studded
+   * leather)" for Armour Class, or "Traits" and its entries for Traits), the field gets the value
+   * without its label, exactly as label matching would have given it.
+   */
+  const snapped = (slot: Slot, c: Candidate): Candidate => {
+    if (c.units.length === 0 || c.kind === 'image') return c
+    const chosen = new Set(c.units.map(blockOf))
+    const inChosen = (e: Candidate) => e.units.filter((u) => chosen.has(blockOf(u))).length
+    const preferred = slot.kind === 'text' ? 'pair' : 'section'
+    const best = extraction.candidates
+      .filter((e) => (e.kind === 'pair' || e.kind === 'section') && !e.entry && fits(slot, e) && free(e) && inChosen(e) > 0 && compareLabels(slot.key, e.key, input.synonyms) !== undefined)
+      .sort((a, b) => Number(b.kind === preferred) - Number(a.kind === preferred) || inChosen(b) - inChosen(a))[0]
+    if (!best) return c
+    if (best.kind !== 'section' || best.units.length !== best.blocks.length + 1) return { ...best, id: c.id, label: 'AI', found: undefined }
+    // Only the entries the AI picked: snapping takes the heading off, it never adds to the answer.
+    const keep = best.blocks.map((_, k) => chosen.has(blockOf(best.units[k + 1]!)))
+    const blocks = best.blocks.filter((_, k) => keep[k])
+    if (blocks.length === 0) return c
+    return { ...best, id: c.id, label: 'AI', blocks, units: [best.units[0]!, ...best.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
+  }
+  /**
+   * A value the AI copied may appear in several blocks ("10 (+0)" for both CON and INT): use one
+   * that is still free, the one the clip labels for this field first.
+   */
+  const copiedFrom = (slot: Slot, c: Candidate): Candidate => {
+    if (!c.found || c.units.length === 0) return c
+    const fitsSlot = (i: number) => (blockLabels.get(i)?.labels ?? []).some((label) => compareLabels(slot.key, cleanLabel(label), input.synonyms) !== undefined)
+    const whole = c.found.filter((i) => comparable(blockText(input.clip[i] as AnyBlock)) === comparable(c.text)).sort((a, b) => Number(fitsSlot(b)) - Number(fitsSlot(a)))
+    const pick = whole.find((i) => !overlaps([`b${i}`], used))
+    if (pick === undefined) return c
+    const block = input.clip[pick]!
+    return { ...c, units: [`b${pick}`], blocks: [block], runs: Array.isArray((block as AnyBlock).content) ? ((block as AnyBlock).content as Run[]) : c.runs }
+  }
   const assign = (slot: Slot, original: Candidate, origin: SlotOrigin) => {
     const candidate = available(original) ?? original
     // Show what will be written: a text field gets the whole entry, a row only the value.
@@ -197,31 +256,61 @@ function plan(input: FillInput): FillPlan {
     }
   }
 
-  // 3. The AI, for what is still empty. It never overrides a label or a choice.
+  // 3. The AI, for what is still empty. It never overrides a label or a choice, and an answer that
+  //    disagrees with the clip's own labels and headings is shown unticked, with the reason.
   if (input.mode !== 'labels' && input.ai) {
     for (const slot of fillable) {
+      if (states.get(slot.id)!.status !== 'empty' || input.overrides[slot.id]?.choice) continue
+      // The model may answer with block numbers and a copied value; when they disagree, the one the
+      // clip agrees with wins ("[10]" is the CON label, "16 (+3)" is Dexterity's value).
+      let pick: { candidate: Candidate; verified: boolean; warning?: string } | undefined
+      for (const suggested of aiCandidates.get(slot.id) ?? []) {
+        const candidate = snapped(slot, copiedFrom(slot, suggested))
+        if (!free(candidate) || !aiFits(slot, candidate)) continue
+        // A section answered with typed-out text rather than block numbers is not trusted either.
+        const verified = !candidate.id.endsWith(':written') && !(slot.kind === 'rich' && candidate.units.length === 0)
+        const warning = verified ? aiWarning(slot, candidate, { blockLabels, synonyms: input.synonyms, rules: siteRules, slots: fillable }) : undefined
+        if (!pick || (verified && !warning && (!pick.verified || pick.warning))) pick = { candidate, verified, warning }
+      }
+      if (!pick) continue
+      assign(slot, pick.candidate, pick.verified ? 'ai' : 'ai-written')
       const state = states.get(slot.id)!
-      if (state.status !== 'empty' || input.overrides[slot.id]?.choice) continue
-      const candidate = aiCandidates.get(slot.id)
-      if (!candidate || !free(candidate) || !aiFits(slot, candidate)) continue
-      // A section answered with typed-out text rather than block numbers is not trusted either.
-      const verified = !candidate.id.endsWith(':written') && !(slot.kind === 'rich' && candidate.units.length === 0)
-      assign(slot, candidate, verified ? 'ai' : 'ai-written')
-      states.get(slot.id)!.options.unshift(candidate)
+      state.options.unshift(pick.candidate)
+      state.warning = pick.warning
     }
   }
 
-  // 4. Ticks. An AI-written value needs an explicit tick.
+  // 4. Ticks. An AI-written value, or one that disagrees with the clip, needs an explicit tick.
   for (const slot of fillable) {
     const state = states.get(slot.id)!
     if (state.status !== 'filled') continue
-    const off = input.overrides[slot.id]?.off ?? state.origin === 'ai-written'
+    const off = input.overrides[slot.id]?.off ?? (state.origin === 'ai-written' || state.warning !== undefined)
     if (off) {
       state.status = 'off'
       if (state.candidate) {
         taken.delete(state.candidate.id)
         for (const unit of state.candidate.units) used.splice(used.indexOf(unit), 1)
       }
+    }
+  }
+
+  // 5. Worked-out fields, for what is still empty: Initiative from Dexterity's modifier.
+  for (const rule of input.derived ?? []) {
+    const targetKey = cleanLabel(rule.target)
+    const sourceKey = cleanLabel(rule.source)
+    const source = fillable.map((s) => states.get(s.id)!).find((s) => s.status === 'filled' && compareLabels(s.slot.key, sourceKey, input.synonyms) !== undefined)
+    if (!source) continue
+    const value = deriveValue(source.text, rule.part)
+    if (!value) continue
+    for (const slot of fillable) {
+      const state = states.get(slot.id)!
+      // An AI answer left unticked (made up, or at odds with the clip) gives way to a worked-out value.
+      const open = state.status === 'empty' || (state.status === 'off' && (state.origin === 'ai-written' || state.warning !== undefined) && input.overrides[slot.id]?.off === undefined)
+      if (slot.kind !== 'text' || !open || input.overrides[slot.id]?.choice || compareLabels(slot.key, targetKey, input.synonyms) === undefined) continue
+      const candidate = { ...typedCandidate(slot, value), id: `derived:${slot.id}`, label: `From ${source.slot.label}` }
+      const off = input.overrides[slot.id]?.off === true
+      states.set(slot.id, { ...state, status: off ? 'off' : 'filled', origin: 'derived', text: value, candidate, warning: undefined, note: `From ${source.slot.label}: ${source.text}` })
+      state.options.unshift(candidate)
     }
   }
 
@@ -237,14 +326,103 @@ function plan(input: FillInput): FillPlan {
     else if (state.candidate) fills.set(state.slot.id, valueFor(state.slot, state.candidate))
   }
 
-  // A line that is just the page's name (a stat block's title) would only repeat it.
-  const title = comparable(input.title)
-  if (title) input.clip.forEach((block, i) => {
-    if (block.kind === 'paragraph' && comparable(blockText(block as AnyBlock)) === title && !overlaps([`b${i}`], used)) used.push(`b${i}`)
-  })
+  // A line or heading that is just the page's name (a stat block's title) would only repeat it.
+  const titleBlocks = titleKey
+    ? input.clip.map((block, i) => ((block.kind === 'paragraph' || block.kind === 'heading') && comparable(blockText(block as AnyBlock)) === titleKey ? i : -1)).filter((i) => i >= 0)
+    : []
+  for (const i of titleBlocks) if (!overlaps([`b${i}`], used)) used.push(`b${i}`)
   const leftovers = leftoverBlocks(input.clip, extraction, used)
   const unusedBlockIndexes = input.clip.map((_, i) => i).filter((i) => !used.some((u) => u === `b${i}` || u.startsWith(`b${i}.`)))
-  return { slots: slots.map((s) => states.get(s.id)!), candidates, extraction, leftovers, fills, unusedBlockIndexes }
+  return { slots: slots.map((s) => states.get(s.id)!), candidates, extraction, leftovers, fills, unusedBlockIndexes, blockLabels, titleBlocks }
+}
+
+/**
+ * The clip blocks to show the AI: the unused ones (all of them in "AI" mode), apart from blocks
+ * labelled for something none of the asked fields could be. Those could only be wrong answers
+ * ("Saving Throws DEX +6" when no field is about saving throws), and a small model does better
+ * with fewer distractions.
+ */
+export function blocksForAi(plan: FillPlan, slots: Slot[], mode: FillMode, clipLength: number, synonyms: Synonyms): number[] {
+  const indexes = mode === 'ai' ? Array.from({ length: clipLength }, (_, i) => i).filter((i) => !plan.titleBlocks.includes(i)) : plan.unusedBlockIndexes
+  return indexes.filter((i) => {
+    const labels = plan.blockLabels.get(i)?.labels ?? []
+    return labels.length === 0 || labels.some((label) => slots.some((slot) => compareLabels(slot.key, cleanLabel(label), synonyms) !== undefined))
+  })
+}
+
+/** The top-level block a unit belongs to ("b3.s0" → 3). */
+function blockOf(unit: string): number | undefined {
+  const match = /^b(\d+)(?:\.|$)/.exec(unit)
+  return match ? Number(match[1]) : undefined
+}
+
+/**
+ * The labels and headings the clip gives each block. A section's blocks are under its heading (the
+ * nearest one wins); a heading is under itself. The page's own name, as a heading over everything,
+ * says nothing about what a block is. A label on its own line ("CHA", "Traits") is a looser
+ * heading: what follows it is under it only up to the next line with a label of its own.
+ */
+function labelBlocks(clip: Block[], extraction: Extraction, titleKey: string): Map<number, BlockLabels> {
+  const out = new Map<number, BlockLabels>()
+  const at = (i: number) => out.get(i) ?? (out.set(i, { labels: [] }), out.get(i)!)
+  for (const c of extraction.candidates) {
+    if (c.kind !== 'pair' || c.entry || !c.key || c.key === titleKey) continue
+    for (const i of new Set(c.units.map(blockOf))) if (i !== undefined && !at(i).labels.includes(c.label)) at(i).labels.push(c.label)
+  }
+  const sections = extraction.candidates.filter((c) => c.kind === 'section' && c.key && c.key !== titleKey).sort((a, b) => b.units.length - a.units.length)
+  for (const c of sections) {
+    const loose = clip[blockOf(c.units[0]!)!]?.kind !== 'heading'
+    for (const [k, unit] of c.units.entries()) {
+      const i = blockOf(unit)
+      if (i === undefined) continue
+      const labels = out.get(i)?.labels ?? []
+      if (loose && k > 0 && labels.length > 0 && !labels.includes(c.label)) break
+      at(i).under = c.label
+    }
+  }
+  return out
+}
+
+/**
+ * Checks an AI suggestion against what the clip itself says, so a small model's slip is shown
+ * unticked with the reason instead of going into the page:
+ *   1. A labelled value belongs in a field with that label (or a synonym, or a saved rule):
+ *      "Saving Throws DEX +6" is not a Legendary Action, and "Poison" from "Damage Resistances
+ *      Poison" is not an Immunity.
+ *   2. A heading in the template ("Legendary Actions") takes only what the clip has under a heading
+ *      like it, and no field takes what the clip has under a heading that names another field
+ *      (the paragraph under "Description" is not the creature's size and type).
+ *   3. A one-line field takes one short line.
+ */
+function aiWarning(slot: Slot, candidate: Candidate, { blockLabels, synonyms, rules, slots }: { blockLabels: Map<number, BlockLabels>; synonyms: Synonyms; rules: SavedRule[]; slots: Slot[] }): string | undefined {
+  // Prose that happens to contain a copied value ("poison") says nothing; a labelled line does.
+  const fitsLabel = (label: string) => {
+    const key = cleanLabel(label)
+    return compareLabels(slot.key, key, synonyms) !== undefined || rules.some((r) => r.slotKey === slot.key && r.candidateKey === key)
+  }
+  // Blocks the AI chose must each be right; a copied value must be right in at least one place it appears.
+  const chosen = candidate.found === undefined
+  const indexes = candidate.found ?? [...new Set(candidate.units.map(blockOf).filter((i) => i !== undefined))]
+  const wrongLabel = (i: number) => {
+    const labels = blockLabels.get(i)?.labels ?? []
+    return labels.length > 0 && !labels.some(fitsLabel) ? labels[0] : undefined
+  }
+  const labelled = chosen ? indexes : indexes.filter((i) => (blockLabels.get(i)?.labels.length ?? 0) > 0)
+  const wrong = chosen ? labelled.map(wrongLabel).find(Boolean) : labelled.length > 0 && labelled.every((i) => wrongLabel(i)) ? wrongLabel(labelled[0]!) : undefined
+  if (wrong) return `The clip labels this “${wrong}”, not “${slot.label}”.`
+  if (slot.titled && chosen) {
+    const under = indexes.map((i) => blockLabels.get(i)?.under)
+    const other = under.find((u) => u && !fitsLabel(u))
+    if (other) return `In the clip this is under “${other}”, not “${slot.label}”.`
+    // Content under no heading, in a clip that has headings: had the clip a section like this, it would be under it.
+    const clipHasSections = [...blockLabels.values()].some((b) => b.under)
+    if (clipHasSections && under.some((u) => !u)) return `The clip has no “${slot.label}” heading for this.`
+  } else if (chosen) {
+    const other = indexes.map((i) => blockLabels.get(i)?.under).find((u) => u && !fitsLabel(u) && slots.some((s) => s !== slot && compareLabels(s.key, cleanLabel(u), synonyms) !== undefined))
+    if (other) return `In the clip this is under “${other}”, which is a field of its own.`
+  }
+  if (slot.kind === 'text' && (candidate.text.length > 200 || candidate.text.trim().includes('\n'))) return 'Too long for a one-line field.'
+  return undefined
 }
 
 function matchTier(slot: Slot, candidate: Candidate, synonyms: Synonyms, rules: SavedRule[]): LabelMatch | undefined {
@@ -290,15 +468,19 @@ export function comparable(text: string): string {
  * and images survive. A short value must appear in the clip; if it doesn't, it is marked as written
  * by the AI (the id ends in ":written") and needs a tick.
  */
-export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Block[]): Map<string, Candidate> {
-  const out = new Map<string, Candidate>()
+export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Block[], title = ''): Map<string, Candidate[]> {
+  const out = new Map<string, Candidate[]>()
   const clipText = comparable(clip.map((b) => blockText(b as AnyBlock)).join('\n'))
+  const titleKey = comparable(title)
   for (const [slotId, suggestion] of ai) {
+    const options: Candidate[] = []
+    out.set(slotId, options)
     const numbers = [...new Set(suggestion.blocks)].filter((n) => Number.isInteger(n) && n >= 0 && n < clip.length).sort((a, b) => a - b)
     if (numbers.length > 0) {
-      const blocks = numbers.map((n) => clip[n]!)
+      // The page's name is never part of a field's value ("Assassin" above "Medium Humanoid…").
+      const blocks = numbers.map((n) => withoutTitle(clip[n]!, titleKey)).filter((b): b is Block => b !== undefined)
       const allImages = blocks.every((b) => b.kind === 'image')
-      out.set(slotId, {
+      if (blocks.length > 0) options.push({
         id: `ai:${slotId}`,
         label: 'AI',
         key: '',
@@ -308,15 +490,17 @@ export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Blo
         text: blocks.map((b) => blockText(b as AnyBlock)).join('\n'),
         units: numbers.map((n) => `b${n}`),
       })
-      continue
     }
-    const value = suggestion.value.trim()
+    const lines = suggestion.value.trim().split(/\n+/)
+    while (lines.length > 0 && titleKey && comparable(lines[0]!) === titleKey) lines.shift()
+    const value = lines.join('\n').trim()
     if (!value) continue
     const verified = clipText.includes(comparable(value))
     // A value that is a whole block of the clip uses that block, so it isn't repeated at the end.
     const whole = clip.findIndex((b) => comparable(blockText(b as AnyBlock)) === comparable(value))
-    out.set(slotId, {
-      id: verified ? `ai:${slotId}` : `ai:${slotId}:written`,
+    const found = clip.map((b, i) => (comparable(blockText(b as AnyBlock)).includes(comparable(value)) ? i : -1)).filter((i) => i >= 0)
+    options.push({
+      id: verified ? `ai:${slotId}:value` : `ai:${slotId}:written`,
       label: 'AI',
       key: '',
       kind: 'pair',
@@ -324,9 +508,22 @@ export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Blo
       blocks: whole >= 0 ? [clip[whole]!] : [{ kind: 'paragraph', content: [{ text: value }] }],
       text: value,
       units: whole >= 0 ? [`b${whole}`] : [],
+      found,
     })
   }
   return out
+}
+
+/** A block without a first line that is only the page's name; undefined when nothing else is left. */
+function withoutTitle(block: Block, titleKey: string): Block | undefined {
+  if (!titleKey || !('content' in block) || !Array.isArray(block.content)) return block
+  const runs = block.content as Run[]
+  const cut = runs.findIndex((r) => 'break' in r)
+  const first = cut === -1 ? runs : runs.slice(0, cut)
+  if (comparable(runsText(first)) !== titleKey) return block
+  if (cut === -1) return undefined
+  const rest = runs.slice(cut + 1)
+  return runsText(rest).trim() ? ({ ...block, content: rest } as Block) : undefined
 }
 
 /** Rules to save from the review screen: manual choices the user asked to remember. */

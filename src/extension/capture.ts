@@ -5,6 +5,7 @@
  */
 import { Readability } from '@mozilla/readability'
 import type { Capture } from '../clip/importClip.js'
+import { markLabelElements } from '../clip/labelElements.js'
 
 export interface CaptureRequest {
   kind: Capture['kind']
@@ -58,6 +59,8 @@ function capture(request: CaptureRequest): Capture {
   const clone = document.cloneNode(true) as Document
   // Readability drops class names, so remove page furniture it would keep as text ("[edit]") first.
   for (const furniture of Array.from(clone.querySelectorAll('.mw-editsection'))) furniture.remove()
+  // It also drops the classes that mark stat block and infobox labels, so make those bold first.
+  markLabelElements(clone.body)
   const article = new Readability(clone, { keepClasses: false }).parse()
   if (article?.content) {
     return { ...base, kind: 'article', html: article.content, text: article.textContent ?? '', suggestedTitle: preferHeading(article.title?.trim()) || pageTitle() }

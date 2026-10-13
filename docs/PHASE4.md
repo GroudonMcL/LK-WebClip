@@ -61,6 +61,64 @@ Everything is off until you tick **Settings → Templates → Enable template fi
      - If the template has its own “From [Source]” heading with only placeholder text under it (your God Template), they go there instead, so the credit isn’t doubled.
      - The clip’s own name line (“Goblin”) is dropped, since it only repeats the page name.
 
+## Keeping the AI honest
+
+Your first on-device run (D&D Beyond's Assassin into the Statblock Template) made three mistakes:
+
+- **The name went into a field.** "Assassin" ended up above "Medium Humanoid (Any Race), Any Non-Good Alignment" in the size, type and alignment field.
+- **Something went in the wrong field.** "Saving Throws DEX +6, INT +4" was put under Legendary Actions.
+- **Initiative stayed empty.** The stat block doesn't state it.
+
+Rather than patch those three, 0.4.1 changes how every AI answer is handled. The AI decides where things might go; the clip's own structure decides whether it can.
+
+1. **More labels are recognised, so less looks like loose text.**
+   - **Label classes count as bold.** Many sites mark labels with a class rather than bold (D&D Beyond's `…-label`, a wiki's `pi-data-label`). Those labels are now read as bold.
+   - **The synonym list doubles as a vocabulary.** Its multi-word labels ("Saving Throws", "Proficiency Bonus") are recognised at the start of a short line, even when the template has no field for them.
+   - **A label inside a list stays in its value.** "Saving Throws DEX +6, INT +4" is no longer split into DEX and INT values. This mattered live: your project's "Saving Throws" page turned the label into a link, so it was no longer bold.
+2. **The model is told what the clip says.**
+   - Each block is shown with its label and heading: `[18] (paragraph, labelled "Saving Throws")`, `(paragraph, under "Traits")`.
+   - Template headings are marked as headings.
+   - The instructions now cover labels and headings, say never to include the page name, and say that empty is a good answer.
+   - **Lines that can't be right are left out.** A line labelled for something none of the asked fields could be isn't shown at all; the Assassin's AI now sees one line instead of three.
+3. **Every answer is checked against the clip** before it is ticked. An answer that fails is shown unticked, with the reason, on the review screen:
+   - **A labelled value goes only in a field with that label**, or a synonym of it, or one of your saved rules. "The clip labels this “Saving Throws”, not “Legendary Actions”."
+   - **A template heading takes only content under a heading like it.** "In the clip this is under “Actions”…" and "The clip has no “Bonus Actions” heading for this."
+   - **No field takes content from under a heading that names another field.** The paragraph under "Description" isn't the creature's type.
+   - **A one-line field takes one short line.**
+   - **A value that isn't in the clip is AI-written**, as before.
+   - Tick any of these to use it anyway.
+4. **Answers are cleaned up the way labels would have done it.**
+   - **The page name is removed** from any value: as a separate block, as the first line of a paragraph, or typed into the answer.
+   - **The label comes off a labelled pick.** When the AI picks "Armor Class 15 (studded leather)" for Armour Class, the field gets "15 (studded leather)". Picking a section's heading and entries gives just its entries. This only removes the label: it never adds a block the AI didn't pick.
+   - **The model's two answers are cross-checked.** It can answer with block numbers and a copied value. When they disagree (block 10, the "CON" label, but the value "16 (+3)" for Dexterity), the one the clip agrees with is used.
+   - **Repeated values each get their own block.** CON and INT both "10 (+0)" now fill both fields.
+5. **Worked-out fields.**
+   - **Settings → Templates → Worked-out fields** holds one rule per line. The default is `Initiative = Dexterity modifier`.
+   - A rule fills a field only when nothing else did, or when the AI's answer for it was left unticked.
+   - It is ticked, with an **Worked out** badge and where it came from ("From Dexterity: 16 (+3)").
+   - `modifier` takes the signed number in "16 (+3)", or works it out from a lone score; `number` takes the first number; nothing after the field name takes the whole value.
+6. **What the AI was asked and answered.** This link under the AI status line shows the full prompt and the raw answer, so a bad fill can be reported exactly.
+
+### How this is measured
+
+`npm run eval:ai` fills saved clips (the Goblin and the Assassin) with a free OpenRouter model, in both "Labels then AI" and "AI" modes, and scores every field against what a person would put there. A score is **right**, **missed**, **caught** (wrong, but left unticked) or **wrong** (would go into the page). Results on 13 October 2026:
+
+| Model | Before these changes | After |
+| --- | --- | --- |
+| liquid/lfm-2.5-2.6b (2.6 billion parameters, close to Gemini Nano's size), two runs, 88 scored fields each | 40 wrong, 1 caught | 3 wrong, 1 caught |
+| dots-3-note-preview (the default free model), one run | 0 wrong, 4 missed | not re-run |
+
+Most of the small model's "before" errors were labels kept in values ("Armor Class 15…"), in "AI" mode.
+
+Of the three left "after":
+- **The Description paragraph in the size, type and alignment field.** The "another field's heading" rule was added for this; a replay test covers it. The model couldn't be re-run the same day because the free daily limit was used up.
+- **The Goblin's type line in Description.** Nothing in the clip's structure rules this out.
+- **A partial pick of Actions**, two of three entries; the third stays in the unused content.
+
+In "Labels then AI", the mode you used, those runs had 85 of 88 fields right, 1 wrong (the Description one), 1 missed and 1 caught.
+
+When a fill goes wrong, the clip becomes a fixture, the bad answer becomes a replay test in `test/fill.test.ts`, and the clip becomes a case in `scripts/eval-ai.ts`. Then the fix is measured across every saved clip, not just the one that failed. Gemini Nano itself still can't be run here (it only runs inside Chrome), so the small OpenRouter model stands in for it.
+
 ## AI engines
 
 - **On-device (Chrome’s built-in AI)**:
@@ -78,7 +136,7 @@ Everything is off until you tick **Settings → Templates → Enable template fi
 
 ## How it was tested
 
-- **111 unit tests** (`npm test`), 34 of them new, run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
+- **131 unit tests** (`npm test`; 111 in 0.4.0), run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
   - slot finding;
   - every candidate pattern;
   - matching, ties, your choices, saved rules and AI checks;

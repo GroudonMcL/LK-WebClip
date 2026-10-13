@@ -1,4 +1,5 @@
 import type { Block, ListItemBlock, Run, TableCellBlock, TableRowBlock } from '@legendkeeper/sdk/blocks'
+import { isLabelElement } from './labelElements.js'
 
 /**
  * Converts captured web content into LegendKeeper blocks.
@@ -157,6 +158,7 @@ function convertNode(node: Node, out: BlockBuilder, context: Context, marks: Mar
   const el = node as Element
   const tag = el.tagName.toLowerCase()
   if (SKIP.has(tag) || isHidden(el)) return
+  if (isLabelElement(el)) marks = { ...marks, bold: true }
 
   switch (tag) {
     case 'br':

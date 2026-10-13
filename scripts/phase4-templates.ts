@@ -16,11 +16,13 @@ import { Readability } from '@mozilla/readability'
 import { DOMParser, parseHTML } from 'linkedom'
 import { importClip, prepareClip, type Capture } from '../src/clip/importClip.js'
 import { DEFAULT_LINK_OPTIONS } from '../src/clip/links.js'
+import { markLabelElements } from '../src/clip/labelElements.js'
 import { slotsForAi } from '../src/fill/ai.js'
+import { DEFAULT_DERIVED, parseDerived } from '../src/fill/derived.js'
 import { appendTree } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, suggest } from '../src/fill/engines.js'
 import { DEFAULT_SYNONYMS, Synonyms } from '../src/fill/labels.js'
-import { planFill, type AiSuggestion, type FillMode } from '../src/fill/plan.js'
+import { blocksForAi, planFill, type AiSuggestion, type FillMode, type FillPlan } from '../src/fill/plan.js'
 import { blockText, type AnyBlock } from '../src/fill/template.js'
 import { ProjectIndex, configuredKeys, createPage, describeError, findOrCreateSource, siteName, type SourceConfig } from '../src/index.js'
 import { listTemplates, readTemplate } from '../src/lk/templates.js'
@@ -69,6 +71,8 @@ interface Case {
   destination: 'new' | { appendTo: string }
   credit?: boolean
   verify: (page: { blocks: Block[]; text: string; tags: string[] }) => void
+  /** Checks on the fill plan, before anything is written. */
+  verifyPlan?: (plan: FillPlan) => void
 }
 
 async function run_(c: Case): Promise<void> {
@@ -81,7 +85,8 @@ async function run_(c: Case): Promise<void> {
     const plan = prepareClip(c.capture, index, { links: DEFAULT_LINK_OPTIONS, images: true, parser })
     const content = await readTemplate(lk, templateNamed(c.template).id)
     const tree = c.destination === 'new' ? content.tree : appendTree(content.tree)
-    const base = { tree, templateId: content.id, clip: plan.blocks, title: c.capture.suggestedTitle, site: new URL(c.capture.url).hostname, synonyms: new Synonyms(DEFAULT_SYNONYMS), rules: [], overrides: {}, nameOf }
+    const synonyms = new Synonyms(DEFAULT_SYNONYMS)
+    const base = { tree, templateId: content.id, clip: plan.blocks, title: c.capture.suggestedTitle, site: new URL(c.capture.url).hostname, synonyms, rules: [], overrides: {}, nameOf, derived: parseDerived(DEFAULT_DERIVED) }
     let fill = planFill({ ...base, mode: c.mode })
     let ai: Map<string, AiSuggestion> | undefined
     if (c.mode !== 'labels') {
@@ -89,7 +94,8 @@ async function run_(c: Case): Promise<void> {
       const engine = new OpenRouterEngine({ apiKey: openRouterKey!, model: process.env.OPENROUTER_MODEL ?? models[0]!.id, fallbacks: models })
       const started = Date.now()
       try {
-        const result = await suggest(engine, { slots: slotsForAi(fill, c.mode, {}), clip: plan.blocks, blockIndexes: c.mode === 'ai' ? plan.blocks.map((_, i) => i) : fill.unusedBlockIndexes, title: c.capture.suggestedTitle, nameOf })
+        const slots = slotsForAi(fill, c.mode, {})
+        const result = await suggest(engine, { slots, clip: plan.blocks, blockIndexes: blocksForAi(fill, slots, c.mode, plan.blocks.length, synonyms), title: c.capture.suggestedTitle, nameOf, labels: fill.blockLabels })
         ai = result.suggestions
         console.log(`  AI (${process.env.OPENROUTER_MODEL ?? models[0]!.id}) answered in ${((Date.now() - started) / 1000).toFixed(1)} s with ${ai.size} suggestion(s)`)
       } catch (error) {
@@ -98,8 +104,9 @@ async function run_(c: Case): Promise<void> {
       fill = planFill({ ...base, mode: c.mode, ai })
     }
     for (const s of fill.slots.filter((x) => ['text', 'rich', 'image'].includes(x.slot.kind))) {
-      console.log(`    ${s.status.padEnd(9)} ${(s.origin ?? '').padEnd(10)} ${s.slot.label.slice(0, 32).padEnd(32)} ${s.text.replace(/\s+/g, ' ').slice(0, 60)}`)
+      console.log(`    ${s.status.padEnd(9)} ${(s.origin ?? '').padEnd(10)} ${s.slot.label.slice(0, 32).padEnd(32)} ${s.text.replace(/\s+/g, ' ').slice(0, 60)}${s.warning ? `  ⚠ ${s.warning}` : ''}`)
     }
+    c.verifyPlan?.(fill)
     console.log(`  unused clip parts: ${fill.leftovers.length}`)
 
     const source = c.credit === false ? undefined : (await findOrCreateSource(lk, index, siteName({ url: c.capture.url, ...c.capture.meta }), sourceConfig)).source
@@ -163,6 +170,26 @@ await run_({
   },
 })
 
+const assassinHtml = await readFile(new URL('../test/fixtures/dndbeyond-assassin.html', import.meta.url), 'utf8')
+await run_({
+  title: 'D&D Beyond assassin → Statblock Template, labels then AI (the mistakes from the first on-device run)',
+  capture: capture('selection', assassinHtml, 'https://www.dndbeyond.com/monsters/16794-assassin', 'Assassin', { ogSiteName: 'D&D Beyond' }),
+  template: 'Statblock Template',
+  mode: 'labels-ai',
+  keepUnfilled: false,
+  destination: 'new',
+  verifyPlan: (fill) => {
+    const slot = (label: string) => fill.slots.find((s) => s.slot.label === label)!
+    check(slot('Initiative').origin === 'derived' && slot('Initiative').text === '+3', 'Initiative is worked out from Dexterity (+3)')
+    check(!slot('Size, Creature Type, Alignment').text.includes('Assassin'), 'the page name is not in the size, type and alignment field')
+    check(slot('Legendary Actions').status !== 'filled' || !slot('Legendary Actions').text.includes('Saving Throws'), 'Saving Throws is not in Legendary Actions')
+  },
+  verify: ({ text }) => {
+    check(text.includes('Medium Humanoid (Any Race), Any Non-Good Alignment'), 'the infobox holds the size, type and alignment')
+    check(text.includes('Saving Throws DEX +6') && text.includes('Proficiency Bonus +3'), 'Saving Throws and Proficiency Bonus are kept with the unused content')
+  },
+})
+
 const target = await createPage(lk, index, { parentId: run.resource.id, name: 'Goblin notes (append target)', blocks: [p('Notes written before clipping.')] })
 await run_({
   title: 'D&D Beyond goblin → Statblock Template appended to an existing page, no credit heading',
@@ -183,6 +210,7 @@ await run_({
 const wikiHtml = await (await fetch(WIKI_URL, { headers: { 'User-Agent': 'LK-WebClip/0.4 (https://github.com/GroudonMcL/LK-WebClip)' } })).text()
 const readable = parseHTML(wikiHtml).document
 for (const furniture of Array.from(readable.querySelectorAll('.mw-editsection'))) furniture.remove()
+markLabelElements(readable.body)
 const article = new Readability(readable as unknown as Document).parse()
 if (!article?.content) throw new Error('Readability found no article')
 await run_({

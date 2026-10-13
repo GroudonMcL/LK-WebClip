@@ -1,5 +1,5 @@
 import type { Block } from '@legendkeeper/sdk/blocks'
-import type { AiSuggestion, FillMode, FillPlan, SlotOverride } from './plan.js'
+import type { AiSuggestion, BlockLabels, FillMode, FillPlan, SlotOverride } from './plan.js'
 import { blockText, withNames, type AnyBlock, type Slot } from './template.js'
 
 /**
@@ -26,7 +26,11 @@ export const SYSTEM_PROMPT = [
   'You fill in a template in a LegendKeeper wiki from content clipped from a web page.',
   'You never write new text. For each field, either give the numbers of the clip blocks that belong in it, or copy a short value exactly as it appears in the clip.',
   'Use block numbers for fields that hold paragraphs or sections, and for images. Use a copied value for one-line fields.',
-  'Each block can go in at most one field. If nothing in the clip fits a field, answer with no blocks and an empty value. Never guess.',
+  'Each block can go in at most one field.',
+  'A block marked as labelled (for example labelled "Saving Throws") belongs only in a field with that label or one meaning the same; otherwise leave it out.',
+  'A field that is a heading in the template (for example "Legendary Actions") takes only blocks under a heading with the same meaning in the clip.',
+  'Never put the page name in a field.',
+  'Most clips have nothing for some fields. If nothing in the clip clearly fits a field, answer with no blocks and an empty value. Never guess.',
   'Answer only with JSON in the requested shape.',
 ].join(' ')
 
@@ -52,13 +56,15 @@ export interface AiInput {
   blockIndexes: number[]
   title: string
   nameOf?: (resourceId: string) => string | undefined
+  /** What the clip says about each block (FillPlan.blockLabels), shown to the model with the block. */
+  labels?: Map<number, BlockLabels>
 }
 
 export function buildAiJob(input: AiInput, limits: { maxChars?: number; maxBlockChars?: number } = {}): AiJob | undefined {
   return withNames(input.nameOf, () => job(input, limits))
 }
 
-function job({ slots, clip, blockIndexes, title }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
+function job({ slots, clip, blockIndexes, title, labels }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
   if (slots.length === 0 || blockIndexes.length === 0) return undefined
   const blocks = new Map<number, number>()
   const lines: string[] = []
@@ -74,7 +80,11 @@ function job({ slots, clip, blockIndexes, title }: AiInput, { maxChars = 12_000,
       text = `${text.slice(0, maxBlockChars)}…`
       truncated = true
     }
-    const line = `[${number}] (${block.kind === 'heading' ? `heading ${block.level}` : block.kind}) ${text}`
+    const about = [block.kind === 'heading' ? `heading ${block.level}` : block.kind]
+    const known = labels?.get(index)
+    if (known?.labels.length) about.push(`labelled ${known.labels.map((l) => `"${l}"`).join(', ')}`)
+    if (known?.under && block.kind !== 'heading') about.push(`under "${known.under}"`)
+    const line = `[${number}] (${about.join(', ')}) ${text}`
     if (used + line.length > maxChars) {
       truncated = true
       break
@@ -90,7 +100,8 @@ function job({ slots, clip, blockIndexes, title }: AiInput, { maxChars = 12_000,
     const key = `s${i + 1}`
     slotKeys.set(key, slot.id)
     const example = slot.placeholder && slot.kind !== 'image' ? ` Template example: "${slot.placeholder.replace(/\s+/g, ' ').slice(0, 120)}"` : ''
-    return `${key}: "${slot.label}" (${slot.path}) — ${KIND_TEXT[slot.kind] ?? 'text'}.${example}`
+    const heading = slot.titled ? ' A heading in the template.' : ''
+    return `${key}: "${slot.label}" (${slot.path}) — ${KIND_TEXT[slot.kind] ?? 'text'}.${heading}${example}`
   })
 
   const entry = { type: 'object', properties: { blocks: { type: 'array', items: { type: 'integer' } }, value: { type: 'string' } }, required: ['blocks', 'value'], additionalProperties: false }
@@ -144,7 +155,8 @@ export function parseAiAnswer(job: AiJob, raw: string): Map<string, AiSuggestion
       .filter((index) => !usedBlocks.has(index))
     for (const index of numbers) usedBlocks.add(index)
     const text = typeof value === 'string' ? value.trim().slice(0, 500) : ''
-    if (numbers.length > 0 || text) out.set(slotId, { blocks: numbers, value: numbers.length > 0 ? '' : text })
+    // Both are kept: when the numbers and the value disagree, the plan uses the one the clip agrees with.
+    if (numbers.length > 0 || text) out.set(slotId, { blocks: numbers, value: text })
   }
   if (recognised === 0) throw new AiAnswerError('The AI’s answer had none of the fields asked for.', raw)
   return out

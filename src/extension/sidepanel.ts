@@ -8,11 +8,12 @@ import type { Block } from '@legendkeeper/sdk/blocks'
 import { describeTerm, type LinkTerm } from '../clip/links.js'
 import { importClip, prepareClip, type Capture, type ClipPlan, type SourceSpec } from '../clip/importClip.js'
 import { blocksToHtml } from '../clip/preview.js'
-import { slotsForAi } from '../fill/ai.js'
+import { slotsForAi, SYSTEM_PROMPT } from '../fill/ai.js'
+import { DEFAULT_DERIVED, parseDerived } from '../fill/derived.js'
 import { appendTree, appendedTemplate, applyComposition, compose, type Composition } from '../fill/compose.js'
 import { AiUnavailableError, listFreeModels, ON_DEVICE_HELP, onDeviceStatus, OnDeviceEngine, OpenRouterEngine, suggest, type AiEngine, type FreeModel } from '../fill/engines.js'
 import { DEFAULT_SYNONYMS, formatSynonyms, parseSynonyms, Synonyms } from '../fill/labels.js'
-import { mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillMode, type FillPlan, type SlotOrigin, type SlotOverride, type SlotState } from '../fill/plan.js'
+import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillMode, type FillPlan, type SlotOrigin, type SlotOverride, type SlotState } from '../fill/plan.js'
 import { buildSlots, type TemplateTree } from '../fill/template.js'
 import { createClient } from '../lk/client.js'
 import { describeError, isNotFound } from '../lk/errors.js'
@@ -56,6 +57,9 @@ interface AiState {
   status: 'idle' | 'running' | 'done' | 'error'
   message?: string
   suggestions?: Map<string, AiSuggestion>
+  /** What the AI was asked and answered, shown on request so a bad answer can be understood. */
+  prompt?: string
+  raw?: string
 }
 
 const state: {
@@ -417,6 +421,7 @@ function rebuildPlan(): void {
       ai: mode && mode !== 'labels' && state.ai.key === aiKey() ? state.ai.suggestions : undefined,
       overrides: state.fillOverrides,
       nameOf: (id) => state.index?.get(id)?.name,
+      derived: parseDerived(t.derived),
     })
     void maybeRunAi()
   }
@@ -553,7 +558,7 @@ async function maybeRunAi({ again = false } = {}): Promise<void> {
   const key = aiKey()
   if (state.ai.key === key && !again) return renderAi()
   const slots = slotsForAi(plan, mode, state.fillOverrides)
-  const blockIndexes = mode === 'ai' ? state.plan.blocks.map((_, i) => i) : plan.unusedBlockIndexes
+  const blockIndexes = blocksForAi(plan, slots, mode, state.plan.blocks.length, new Synonyms(state.settings.templates.synonyms))
   if (slots.length === 0 || blockIndexes.length === 0) {
     state.ai = { key, status: 'done', message: slots.length === 0 ? 'Labels filled every field; the AI wasn’t needed.' : 'Everything in the clip is used; nothing left for the AI.' }
     return renderAi()
@@ -565,13 +570,15 @@ async function maybeRunAi({ again = false } = {}): Promise<void> {
     const engine = await aiEngine()
     state.ai.message = `Asking ${engine.name} about ${slots.length} field${slots.length === 1 ? '' : 's'}…`
     renderAi()
-    const result = await suggest(engine, { slots, clip: state.plan.blocks, blockIndexes, title: state.form.title.trim() || capture.suggestedTitle, nameOf: (id) => state.index?.get(id)?.name })
+    const result = await suggest(engine, { slots, clip: state.plan.blocks, blockIndexes, title: state.form.title.trim() || capture.suggestedTitle, nameOf: (id) => state.index?.get(id)?.name, labels: plan.blockLabels })
     if (state.ai.key !== key) return
     const seconds = ((Date.now() - started) / 1000).toFixed(1)
     state.ai = {
       key,
       status: 'done',
       suggestions: result.suggestions,
+      prompt: result.job?.prompt,
+      raw: result.raw,
       message: `${engine.name} suggested ${result.suggestions.size} of ${slots.length} field${slots.length === 1 ? '' : 's'} in ${seconds} s.${result.truncated ? ' The clip was shortened to fit the model.' : ''}`,
     }
     rebuildPlan()
@@ -592,11 +599,17 @@ function renderAi(): void {
   aiBox.hidden = false
   clear(aiBox,
     el('p', { class: `small ${state.ai.status === 'error' ? 'problem' : 'muted'}` }, state.ai.message ?? ''),
-    state.ai.status !== 'running' ? el('button', { type: 'button', class: 'link small', onclick: () => void maybeRunAi({ again: true }) }, 'Ask the AI again') : null)
+    state.ai.status !== 'running' ? el('button', { type: 'button', class: 'link small', onclick: () => void maybeRunAi({ again: true }) }, 'Ask the AI again') : null,
+    state.ai.prompt
+      ? el('details', { class: 'ai-exchange' },
+          el('summary', { class: 'small' }, 'What the AI was asked and answered'),
+          el('pre', {}, `${SYSTEM_PROMPT}\n\n${state.ai.prompt}`),
+          el('pre', {}, state.ai.raw ?? ''))
+      : null)
 }
 
 const ORIGINS: Record<SlotOrigin, string> = {
-  rule: 'Saved rule', label: 'Label', synonym: 'Synonym', similar: 'Similar label', ai: 'AI', 'ai-written': 'AI-written', manual: 'Your choice', typed: 'Typed', title: 'Page name',
+  rule: 'Saved rule', label: 'Label', synonym: 'Synonym', similar: 'Similar label', ai: 'AI', 'ai-written': 'AI-written', derived: 'Worked out', manual: 'Your choice', typed: 'Typed', title: 'Page name',
 }
 
 /** The review screen: each field, what was found for it, and controls to change it. */
@@ -641,6 +654,8 @@ function renderTemplateFields(): void {
         open ? null : change),
       repeated.has(s.slot.key) ? el('span', { class: 'slot-path' }, s.slot.path) : null,
       s.text ? el('div', { class: 'slot-value' }, s.text.slice(0, 300)) : null,
+      s.warning ? el('div', { class: 'slot-warning small' }, `${s.warning} Tick it to use it anyway.`) : null,
+      s.note ? el('div', { class: 'muted small' }, s.note) : null,
       open ? select : null,
       choice === 'typed'
         ? el('input', { type: 'text', value: override.text ?? '', placeholder: s.slot.placeholder || 'Value', 'aria-label': `Typed value for ${s.slot.label}`, onchange: (e: Event) => setOverride(s.slot.id, { choice: 'typed', text: (e.target as HTMLInputElement).value }) })
@@ -1138,6 +1153,12 @@ function templateSettings(): HTMLElement {
   } })
   synonyms.value = formatSynonyms(t.synonyms)
 
+  const derived = el('textarea', { spellcheck: false, 'aria-label': 'Worked-out fields', class: 'short', onchange: (e: Event) => {
+    t.derived = (e.target as HTMLTextAreaElement).value
+    save()
+  } })
+  derived.value = t.derived
+
   const rules = project?.rules ?? []
   const rulesList = el('ul', { class: 'settings-list' }, ...rules.map((rule, i) => {
     const loaded = state.template?.id === rule.templateId ? state.template : undefined
@@ -1165,6 +1186,13 @@ function templateSettings(): HTMLElement {
           t.synonyms = DEFAULT_SYNONYMS
           save()
           synonyms.value = formatSynonyms(t.synonyms)
+        } }, 'Reset to the defaults')),
+      field('Worked-out fields', derived,
+        el('p', { class: 'muted small' }, 'Fills a field the clip doesn’t state from another field, one per line: “Initiative = Dexterity modifier”. End with “modifier” for the signed number in “16 (+3)”, “number” for the first number, or nothing for the whole value. Used only when nothing else fills the field.'),
+        el('button', { type: 'button', class: 'link small', onclick: () => {
+          t.derived = DEFAULT_DERIVED
+          save()
+          derived.value = t.derived
         } }, 'Reset to the defaults')),
       field(`Saved rules${project ? ` in ${project.projectName}` : ''}`,
         rules.length ? rulesList : el('p', { class: 'muted small' }, 'None yet. When you pick a different value for a field on the review screen, you can remember it for that website.')),

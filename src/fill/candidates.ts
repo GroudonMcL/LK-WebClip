@@ -35,6 +35,13 @@ export interface Candidate {
   /** Plain text of the value, for the review screen and the AI check. */
   text: string
   /**
+   * A named entry rather than a field label: "**Multiattack.** The assassin makes…" (the label
+   * ends with a full stop). Entries are what a section holds, so they don't tie a block to a field.
+   */
+  entry?: boolean
+  /** For a value the AI copied: the top-level blocks it appears in. */
+  found?: number[]
+  /**
    * The parts of the clip this uses: "b3" is top-level block 3, "b3.r1" a table row, "b3.c2" a
    * table column, "b3.s0" a paragraph segment. For a section, units[0] is its heading or label line
    * and units[k + 1] is blocks[k].
@@ -51,7 +58,16 @@ export interface Extraction {
 export interface ExtractOptions {
   /** Cleaned labels (with their synonyms) used by the template, which may start a line without bold or a colon. */
   knownLabels: Iterable<string>
+  /**
+   * Other labels worth recognising though the template has no field for them (every label in the
+   * synonym list, such as "Saving Throws"), so their values aren't mistaken for unlabelled text.
+   * Only labels of two or more words are used, and only at the start of a short line.
+   */
+  vocabulary?: Iterable<string>
 }
+
+/** Lines longer than this are prose, where a vocabulary label is more likely the start of a sentence. */
+const VOCABULARY_LINE_CHARS = 160
 
 const MAX_LABEL_WORDS = 6
 const MAX_LABEL_CHARS = 48
@@ -60,6 +76,7 @@ const SHORT_VALUE_CHARS = 80
 export function extractCandidates(blocks: Block[], options: ExtractOptions): Extraction {
   const known = [...new Set([...options.knownLabels].filter(Boolean))].sort((a, b) => b.length - a.length)
   const knownSet = new Set(known)
+  const withVocabulary = [...new Set([...known, ...[...(options.vocabulary ?? [])].filter((l) => l.includes(' '))])].sort((a, b) => b.length - a.length)
   const candidates: Candidate[] = []
   const split: Extraction['split'] = new Map()
   const add = (c: Omit<Candidate, 'id' | 'key'>) => {
@@ -118,7 +135,8 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
     }
 
     const runs = block.content as Run[]
-    const segments = boldSegments(runs) ?? knownSegments(runs, known) ?? colonSegment(runs)
+    const short = runsText(runs).trim().length <= VOCABULARY_LINE_CHARS
+    const segments = boldSegments(runs) ?? knownSegments(runs, short ? withVocabulary : known) ?? colonSegment(runs)
     if (!segments) continue
     const pieces = splitRuns(runs, segments.flatMap((s) => [s.labelEnd, s.end]))
     const out: { from: number; to: number; unit: string }[] = []
@@ -134,7 +152,7 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
       if (!/[:.]$/.test(rawLabel) && !/^[:–—-]/.test(runsText(valueRuns).trim()) && text.length > 120 && /^\p{Ll}/u.test(text)) return
       // In a row the value alone; in a text field the whole entry, so "**Shortbow.** Ranged…" keeps its name.
       const whole = trimRuns(sliceText(pieces.runs, pieces.offsets, segment.start, segment.end))
-      add({ label, kind: 'pair', runs: stripLeadingColon(valueRuns), blocks: [{ kind: 'paragraph', content: whole }], text, units: [unit] })
+      add({ label, kind: 'pair', runs: stripLeadingColon(valueRuns), blocks: [{ kind: 'paragraph', content: whole }], text, units: [unit], ...(/\.$/.test(rawLabel) ? { entry: true } : {}) })
       out.push({ from: indexAt(pieces.offsets, segment.start), to: indexAt(pieces.offsets, segment.end), unit })
     })
     if (out.length > 0) split.set(i, { runs: pieces.runs, segments: out })
@@ -230,7 +248,8 @@ function boldSegments(runs: Run[]): Segment[] | undefined {
 
 /**
  * "Armor Class 15 (leather armor, shield)": a paragraph that starts with a label the template
- * knows, split again at each later known label that starts with a capital letter.
+ * knows, split again at each later known label that starts with a capital letter and follows a
+ * value ("Armor Class 15 Hit Points 7"), but not inside a list ("Saving Throws DEX +6, INT +4").
  */
 function knownSegments(runs: Run[], known: string[]): Segment[] | undefined {
   if (known.length === 0) return undefined
@@ -242,7 +261,9 @@ function knownSegments(runs: Run[], known: string[]): Segment[] | undefined {
   for (let pos = lead + found; pos < text.length; pos++) {
     if (!/\s/.test(text[pos - 1]!) || !/\p{Lu}/u.test(text[pos]!)) continue
     const length = labelAt(text, pos, known)
-    if (length !== undefined) {
+    // "Saving Throws DEX +6, INT +4": a label straight after another, or after a comma, is part of a value.
+    const before = text.slice(starts.at(-1)!.labelEnd, pos).trim()
+    if (length !== undefined && before !== '' && !/[,;]$/.test(before)) {
       starts.push({ start: pos, labelEnd: pos + length })
       pos += length
     }

@@ -194,7 +194,9 @@ try {
   // 5. Templates: the goblin stat block into the Statblock Template, labels then (on-device) AI.
   console.log('\n▶ Templates: stat block → Statblock Template, then appended to a page')
   // Chromium here has no built-in model, so the panel gets a stand-in with the Prompt API's shape.
-  // It answers like the model would: the block holding the creature type goes in that field.
+  // It answers like the model would: the block holding the creature type goes in that field. It
+  // also makes the kind of slip a small model makes, copying the proficiency bonus "+2" into
+  // Immunities, which the panel must flag and leave unticked.
   // (A string, because the test runner rewrites functions it sends to the page.)
   await panel.evaluate(`globalThis.LanguageModel = {
     availability: async () => 'available',
@@ -205,7 +207,7 @@ try {
       async prompt(input) {
         const block = /\\[(\\d+)\\] \\(paragraph\\) Small Humanoid/.exec(input)?.[1]
         const keys = [...input.matchAll(/^(s\\d+): "([^"]+)"/gm)]
-        return JSON.stringify(Object.fromEntries(keys.map(([, key, label]) => [key, { blocks: label.startsWith('Size') && block ? [Number(block)] : [], value: '' }])))
+        return JSON.stringify(Object.fromEntries(keys.map(([, key, label]) => [key, { blocks: label.startsWith('Size') && block ? [Number(block)] : [], value: label === 'Immunities' ? '+2' : '' }])))
       },
     }),
   }`)
@@ -236,11 +238,15 @@ try {
   await panel.getByRole('radio', { name: 'Labels then AI' }).click()
   await panel.getByText('Keep unfilled template fields').click()
   const fields = panel.locator('.template-fields')
-  await panel.locator('.template-ai').getByText(/suggested 1 of/).waitFor({ timeout: 30_000 })
+  await panel.locator('.template-ai').getByText(/suggested 2 of/).waitFor({ timeout: 30_000 })
   check(true, `the on-device AI was asked: ${(await panel.locator('.template-ai').innerText()).split('\n')[0]}`)
   const sizeRow = fields.locator('li[data-slot^="Size, Creature Type"]')
   check((await sizeRow.locator('.origin').innerText()) === 'AI' && (await sizeRow.innerText()).includes('Small Humanoid'), 'the creature type line came from the AI')
   check((await fields.locator('li[data-slot="Armour Class"] .origin').innerText()) === 'Synonym', '"Armor Class" filled Armour Class through a synonym')
+  const immunities = fields.locator('li[data-slot="Immunities"]')
+  check(!(await immunities.locator('input[type="checkbox"]').isChecked()) && (await immunities.locator('.slot-warning').innerText()).includes('The clip labels this'), 'the AI’s slip (“+2” in Immunities) is shown unticked, with the reason')
+  const initiativeRow = fields.locator('li[data-slot="Initiative"]')
+  check((await initiativeRow.locator('.origin').innerText()) === 'Worked out' && (await initiativeRow.innerText()).includes('+2'), 'Initiative was worked out from Dexterity (+2)')
   // A manual choice, remembered as a rule for this site.
   const legendary = fields.locator('li[data-slot="Legendary Actions"]')
   await fields.locator('summary.empty-slots').click()
@@ -261,6 +267,7 @@ try {
   check((goblinRes.tags ?? []).includes('Statblock') && goblinRes.parentId === run.resource.id, 'the page was made from the Statblock Template under the run page')
   check(goblinText.includes('Armour Class: 15 (leather armor, shield)') && goblinText.includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the infobox holds the AC and the AI’s creature type')
   check(!goblinJson.includes('Bonus Actions') && !goblinText.includes('[Description text]'), 'unfilled fields were removed')
+  check(!goblinText.includes('Immunities: +2') && goblinText.includes('Initiative: +2'), 'the flagged slip stayed out of the page; the worked-out Initiative went in')
   const field = (title: string) => goblinPage.blocks.find((b) => b.kind === 'textField' && b.title === title)
   check(blockText(field('Legendary Actions') as AnyBlock).startsWith('Shortbow.'), 'the manual choice went into Legendary Actions, with its name')
   check(blockText(field('Actions') as AnyBlock).startsWith('Scimitar.') && !blockText(field('Actions') as AnyBlock).includes('Shortbow'), 'Actions kept the rest of its section')

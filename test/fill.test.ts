@@ -9,7 +9,9 @@ import { extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
 import { appendTree, appendedTemplate, applyComposition, compose, tidyRules } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngine } from '../src/fill/engines.js'
 import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
-import { mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillInput, type SavedRule } from '../src/fill/plan.js'
+import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillInput, type SavedRule } from '../src/fill/plan.js'
+import { DEFAULT_DERIVED, deriveValue, parseDerived } from '../src/fill/derived.js'
+import { withNewDefaults } from '../src/extension/state.js'
 import { blockText, buildSlots, fillTree, forCopy, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
@@ -180,8 +182,7 @@ describe('planFill', () => {
 
   it('remembers manual choices the user asked to keep', () => {
     const first = plan()
-    const proficiency = first.candidates.find((c) => c.key === 'proficiency bonus')
-    assert.equal(proficiency, undefined, 'unknown labels are not candidates…')
+    assert.ok(first.candidates.some((c) => c.key === 'proficiency bonus'), 'a label the page marks by class is a label, even with no field for it')
     const scimitar = first.candidates.find((c) => c.label === 'Scimitar')!
     const id = slotNamed(first, 'Bonus Actions').slot.id
     const overrides = { [id]: { choice: scimitar.id, remember: true } }
@@ -310,6 +311,212 @@ describe('AI job', () => {
     const result = await suggest(engine, { slots, clip: goblin, blockIndexes: p.unusedBlockIndexes, title: 'Goblin' })
     assert.equal(sizes.length, 3)
     assert.equal(result.suggestions.size, 0)
+  })
+})
+
+// The user's first on-device run (Assassin, Statblock Template, "Labels then AI") made three
+// mistakes. Each is replayed here, with variants, so the same kind of mistake stays caught.
+describe('AI answers checked against the clip (Assassin)', () => {
+  const assassin = blocks(readFileSync(new URL('./fixtures/dndbeyond-assassin.html', import.meta.url), 'utf8'))
+  const index = (start: string) => assassin.findIndex((b) => blockText(b as AnyBlock).startsWith(start))
+  const run = (overrides: Partial<FillInput> = {}, clip = assassin) =>
+    planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Assassin', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels-ai', overrides: {}, derived: parseDerived(DEFAULT_DERIVED), ...overrides })
+  const ids = (p: ReturnType<typeof run>) => (label: string) => slotNamed(p, label).slot.id
+
+  it('works out Initiative from Dexterity when the stat block has none', () => {
+    const p = run()
+    const initiative = slotNamed(p, 'Initiative')
+    assert.equal(initiative.status, 'filled')
+    assert.equal(initiative.origin, 'derived')
+    assert.equal(initiative.text, '+3')
+    assert.match(initiative.note!, /Dexterity: 16 \(\+3\)/)
+    assert.ok(!slotsForAi(p, 'labels-ai', {}).some((s) => s.label === 'Initiative'), 'the AI is not asked about it')
+  })
+
+  it('reads labels the page marks by class, so they are not offered to the AI as loose text', () => {
+    const p = run()
+    const slots = slotsForAi(p, 'labels-ai', {})
+    const offered = blocksForAi(p, slots, 'labels-ai', assassin.length, synonyms).map((i) => blockText(assassin[i] as AnyBlock))
+    assert.deepEqual(offered, ['Medium Humanoid (Any Race), Any Non-Good Alignment'])
+  })
+
+  it('leaves out the page name the AI included with the creature type', () => {
+    const id = ids(run())
+    const p = run({ ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [index('Assassin'), index('Medium Humanoid')], value: '' }]]) })
+    const size = slotNamed(p, 'Size, Creature Type, Alignment')
+    assert.equal(size.status, 'filled')
+    assert.equal(size.text, 'Medium Humanoid (Any Race), Any Non-Good Alignment')
+  })
+
+  it('…also when the name is a line of the same paragraph, or a heading, or typed into a value', () => {
+    const joined = blocks('<p><strong>Assassin</strong><br>Medium Humanoid (Any Race), Any Non-Good Alignment</p><p><strong>Armor Class</strong> 15</p>')
+    const id = ids(run({}, joined))
+    const p = run({ ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [0], value: '' }]]) }, joined)
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').text, 'Medium Humanoid (Any Race), Any Non-Good Alignment')
+
+    const headed = blocks('<h2>Assassin</h2><p>Medium Humanoid (Any Race), Any Non-Good Alignment</p><p><strong>Armor Class</strong> 15</p>')
+    assert.ok(!run({}, headed).unusedBlockIndexes.includes(0), 'a heading that is the page name is not offered to the AI')
+
+    const typed = run({ ai: new Map([[id('Immunities'), { blocks: [], value: 'Assassin\nPoison' }]]) })
+    assert.ok(!slotNamed(typed, 'Immunities').text.includes('Assassin'))
+  })
+
+  it('does not put a labelled line into a field with another label (Saving Throws → Legendary Actions)', () => {
+    const id = ids(run())
+    const p = run({ ai: new Map([[id('Legendary Actions'), { blocks: [index('Saving Throws')], value: '' }]]) })
+    const legendary = slotNamed(p, 'Legendary Actions')
+    assert.equal(legendary.status, 'off', 'shown, but unticked')
+    assert.match(legendary.warning!, /labels this “Saving Throws”, not “Legendary Actions”/)
+    assert.ok(text(p.leftovers).includes('Saving Throws DEX +6'), 'so it stays in the unused content')
+  })
+
+  it('…nor a value copied from another label’s line (Resistances’ “Poison” → Immunities)', () => {
+    const id = ids(run())
+    const p = run({ ai: new Map([[id('Immunities'), { blocks: [], value: 'Poison' }]]) })
+    assert.match(slotNamed(p, 'Immunities').warning!, /labels this “Damage Resistances”/)
+  })
+
+  it('fills a template heading only from under a heading like it', () => {
+    const id = ids(run({ mode: 'ai' }))
+    const actions = [index('Multiattack'), index('Shortsword'), index('Light Crossbow')]
+    const p = run({ mode: 'ai', ai: new Map<string, AiSuggestion>([
+      [id('Actions'), { blocks: actions.slice(0, 2), value: '' }],
+      [id('Legendary Actions'), { blocks: [actions[2]!], value: '' }],
+      [id('Bonus Actions'), { blocks: [index('Medium Humanoid')], value: '' }],
+    ]) })
+    assert.equal(slotNamed(p, 'Actions').status, 'filled', 'Actions from under “Actions” is fine')
+    assert.equal(slotNamed(p, 'Actions').warning, undefined)
+    assert.match(slotNamed(p, 'Legendary Actions').warning!, /under “Actions”, not “Legendary Actions”/)
+    assert.match(slotNamed(p, 'Bonus Actions').warning!, /no “Bonus Actions” heading/)
+    assert.equal(slotNamed(p, 'Bonus Actions').status, 'off')
+  })
+
+  it('uses the half of an answer the clip agrees with (an off-by-one block number, a right value)', () => {
+    const id = ids(run({ mode: 'ai' }))
+    const p = run({ mode: 'ai', ai: new Map([[id('Dexterity'), { blocks: [index('CON')], value: '16 (+3)' }]]) })
+    assert.equal(slotNamed(p, 'Dexterity').text, '16 (+3)')
+    assert.equal(slotNamed(p, 'Dexterity').status, 'filled')
+    assert.equal(slotNamed(p, 'Dexterity').warning, undefined)
+  })
+
+  it('does not take what the clip has under a heading that names another field', () => {
+    const id = ids(run({ mode: 'ai' }))
+    const p = run({ mode: 'ai', ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [index('Trained in the use')], value: '' }]]) })
+    assert.match(slotNamed(p, 'Size, Creature Type, Alignment').warning!, /under “Description”, which is a field of its own/)
+  })
+
+  it('lets you tick a flagged suggestion to use it anyway', () => {
+    const id = ids(run())
+    const ai = new Map([[id('Legendary Actions'), { blocks: [index('Saving Throws')], value: '' }]])
+    const p = run({ ai, overrides: { [id('Legendary Actions')]: { off: false } } })
+    assert.equal(slotNamed(p, 'Legendary Actions').status, 'filled')
+  })
+
+  it('tells the model what the clip labels each block and which heading it is under', () => {
+    const p = run({ mode: 'ai' })
+    const slots = slotsForAi(p, 'ai', {})
+    const job = buildAiJob({ slots, clip: assassin, blockIndexes: blocksForAi(p, slots, 'ai', assassin.length, synonyms), title: 'Assassin', labels: p.blockLabels })!
+    assert.match(job.prompt, /\(paragraph, labelled "Armor Class"\) Armor Class 15/)
+    assert.match(job.prompt, /\(paragraph, under "Traits"\) Assassinate\./)
+    assert.match(job.prompt, /"Legendary Actions" \(Legendary Actions\) — .* A heading in the template\./)
+    assert.ok(!job.prompt.includes('Saving Throws DEX'), 'a line labelled for no asked field is left out')
+  })
+})
+
+describe('AI values that appear more than once', () => {
+  it('puts a repeated value in each field it belongs to (CON and INT are both “10 (+0)”)', () => {
+    const first = plan({ mode: 'ai' })
+    const id = (label: string) => slotNamed(first, label).slot.id
+    const p = plan({ mode: 'ai', ai: new Map<string, AiSuggestion>([
+      [id('Intelligence'), { blocks: [], value: '10 (+0)' }],
+      [id('Constitution'), { blocks: [], value: '10 (+0)' }],
+    ]) })
+    assert.equal(slotNamed(p, 'Constitution').text, '10 (+0)')
+    assert.equal(slotNamed(p, 'Intelligence').text, '10 (+0)')
+    assert.equal(slotNamed(p, 'Constitution').status, 'filled')
+    assert.equal(slotNamed(p, 'Intelligence').status, 'filled')
+    assert.ok(!text(p.leftovers).includes('10 (+0)'), 'both blocks are used')
+  })
+})
+
+describe('AI picks snap to the clip’s labels', () => {
+  it('drops the label from a labelled line or section the AI picked for that field', () => {
+    const first = plan({ mode: 'ai' })
+    const id = (label: string) => slotNamed(first, label).slot.id
+    const at = (start: string) => goblin.findIndex((b) => blockText(b as AnyBlock).startsWith(start))
+    const traits = goblin.map((b, i) => (blockText(b as AnyBlock) === 'Traits' || blockText(b as AnyBlock).startsWith('Nimble') ? i : -1)).filter((i) => i >= 0)
+    const p = plan({ mode: 'ai', ai: new Map<string, AiSuggestion>([
+      [id('Armour Class'), { blocks: [at('Armor Class')], value: '' }],
+      [id('Hit Points'), { blocks: [], value: 'Hit Points 7 (2d6)' }],
+      [id('Traits'), { blocks: traits, value: '' }],
+    ]) })
+    assert.equal(slotNamed(p, 'Armour Class').text, '15 (leather armor, shield)')
+    assert.equal(slotNamed(p, 'Hit Points').text, '7 (2d6)')
+    assert.match(slotNamed(p, 'Traits').text, /^Nimble Escape\./)
+    for (const label of ['Armour Class', 'Hit Points', 'Traits']) assert.equal(slotNamed(p, label).origin, 'ai')
+  })
+})
+
+describe('worked-out fields', () => {
+  it('reads rules and takes the right part of a value', () => {
+    assert.deepEqual(parseDerived('Initiative = Dexterity modifier\nnonsense\nSpeed = Base Speed'), [
+      { target: 'Initiative', source: 'Dexterity', part: 'modifier' },
+      { target: 'Speed', source: 'Base Speed', part: 'value' },
+    ])
+    assert.equal(deriveValue('16 (+3)', 'modifier'), '+3')
+    assert.equal(deriveValue('8 (−1)', 'modifier'), '-1')
+    assert.equal(deriveValue('16', 'modifier'), '+3', 'from a lone ability score')
+    assert.equal(deriveValue('9', 'modifier'), '-1')
+    assert.equal(deriveValue('Darkvision 60 ft.', 'modifier'), undefined)
+    assert.equal(deriveValue('30 ft., fly 60 ft.', 'number'), '30')
+  })
+
+  it('wins over an AI guess that was left unticked', () => {
+    const first = plan({ mode: 'ai', derived: parseDerived(DEFAULT_DERIVED) })
+    const id = (label: string) => slotNamed(first, label).slot.id
+    const dex = goblin.findIndex((b) => blockText(b as AnyBlock) === '14 (+2)')
+    const p = plan({ mode: 'ai', derived: parseDerived(DEFAULT_DERIVED), ai: new Map<string, AiSuggestion>([
+      [id('Dexterity'), { blocks: [dex], value: '' }],
+      [id('Initiative'), { blocks: [], value: '+2 (12)' }],
+    ]) })
+    assert.equal(slotNamed(p, 'Initiative').origin, 'derived')
+    assert.equal(slotNamed(p, 'Initiative').text, '+2')
+  })
+
+  it('never replaces a value the clip states', () => {
+    const clip = blocks('<p><strong>DEX</strong> 16 (+3)</p><p><strong>Initiative</strong> +7 (17)</p>')
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Initiative').text, '+7 (17)')
+    assert.equal(slotNamed(p, 'Initiative').origin, 'label')
+  })
+})
+
+describe('labels in the clip', () => {
+  it('treats an element with a label class as a bold label', () => {
+    const [block] = blocks('<div><span class="stat__attribute-label">Saving Throws</span> <span>DEX +6</span></div>')
+    assert.deepEqual((block as AnyBlock).content, [{ text: 'Saving Throws', bold: true }, { text: ' DEX +6' }])
+  })
+
+  it('recognises a label from the synonym list at the start of a short plain line, not in prose', () => {
+    const clip = blocks('<p>Saving Throws DEX +6, INT +4</p><p>Saving Throws are rolled when a creature resists a spell, a trap, a poison, a disease or a similar threat, and the Game Master decides which ability is used for the roll each time.</p>')
+    const { candidates } = extractCandidates(clip, { knownLabels: [], vocabulary: synonyms.labels() })
+    assert.deepEqual(candidates.map((c) => [c.key, c.text]), [['saving throws', 'DEX +6, INT +4']])
+  })
+
+  it('keeps labels inside a value together (a linked “Saving Throws” page name, then DEX and INT)', () => {
+    const clip: Block[] = [
+      { kind: 'paragraph', content: [{ text: 'Saving Throws DEX +6, INT +4' }] },
+      { kind: 'paragraph', content: [{ text: 'Armor Class 15 Hit Points 78 (12d8 + 24)' }] },
+    ]
+    const { candidates } = extractCandidates(clip, { knownLabels: ['dex', 'int', 'armor class', 'hit points'], vocabulary: synonyms.labels() })
+    assert.deepEqual(candidates.map((c) => [c.key, c.text]), [['saving throws', 'DEX +6, INT +4'], ['armor class', '15'], ['hit points', '78 (12d8 + 24)']])
+  })
+
+  it('adds new default synonyms to a saved list once, without undoing your edits', () => {
+    const saved = [['Armour Class', 'AC'], ['Hit Points', 'HP']]
+    const merged = withNewDefaults(saved)
+    assert.ok(merged.some((g) => g.includes('Proficiency Bonus')))
+    assert.deepEqual(merged.find((g) => g.includes('AC')), ['Armour Class', 'AC'], 'your groups are kept as they are')
   })
 })
 

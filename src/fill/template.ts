@@ -63,6 +63,11 @@ export interface Slot {
   /** The row's id, for key-value rows (needed to update a sidebar row). */
   rowId?: string
   target: SlotTarget
+  /**
+   * A template heading, or a text field with its own title ("Legendary Actions"): it names a part
+   * of a page, so only content under a heading like it belongs there.
+   */
+  titled?: boolean
 }
 
 export const SIDEBAR = -1
@@ -157,7 +162,7 @@ function walkSiblings(blocks: AnyBlock[], at: number[], path: string[], doc: num
       }
       const length = countWhile(blocks, i + 1, (b) => !SECTION_STOP.has(b.kind))
       const body = blocks.slice(i + 1, i + 1 + length)
-      out.push(slot({ label: text, key: cleanLabel(text), path: [...path, text], kind: 'rich', placeholder: body.map(blockText).join('\n').trim(), doc, target: { type: 'section', at: here, length, level: block.level as number } }))
+      out.push(slot({ label: text, key: cleanLabel(text), path: [...path, text], kind: 'rich', placeholder: body.map(blockText).join('\n').trim(), doc, target: { type: 'section', at: here, length, level: block.level as number }, titled: true }))
       i += length
       continue
     }
@@ -206,7 +211,7 @@ function slotsForProperty(block: AnyBlock, at: number[], path: string[], doc: nu
       const fromBrackets = placeholderLabels(placeholder).join(', ')
       label = fromBrackets || (placeholder.length <= 40 ? placeholder.replace(/\s+text$/i, '') : '') || title || 'Text'
     }
-    return [{ label, key: isWeakLabel(title) && !label ? '' : cleanLabel(label), path: [...path, label].join(' › '), kind: 'rich' as const, placeholder, doc, target: { type: 'field' as const, at } }]
+    return [{ label, key: isWeakLabel(title) && !label ? '' : cleanLabel(label), path: [...path, label].join(' › '), kind: 'rich' as const, placeholder, doc, target: { type: 'field' as const, at }, ...(isWeakLabel(title) ? {} : { titled: true }) }]
   }
   if (block.kind === 'image') {
     const label = title && !isWeakLabel(title) ? title : 'Image'

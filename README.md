@@ -67,7 +67,13 @@ AI assist is only used for template filling, and only if you turn it on in **Set
 - **On-device** (recommended): Chrome’s built-in model (Gemini Nano). It runs on your computer and sends nothing anywhere. It needs Chrome 138 or later and a computer that meets Google’s requirements (22 GB free disk, and a graphics card with more than 4 GB of memory or 16 GB of RAM). **Set up on-device AI** in Settings downloads the model once; `chrome://on-device-internals` shows whether your computer can run it.
 - **OpenRouter**: for computers that can’t run the on-device model. Paste your own OpenRouter key; only free models (ids ending in `:free`) are offered or used. This sends the clip’s text to OpenRouter and the model’s provider, so the clipper asks you to confirm before switching it on.
 
-The AI never writes LegendKeeper content. It only says which parts of the clip go in which field (or copies a short value), the clipper checks every answer (a value that isn’t in the clip is flagged **AI-written** and left unticked), and you review everything before importing.
+The AI never writes LegendKeeper content. It only says which parts of the clip go in which field (or copies a short value), and you review everything before importing. The clipper checks every answer against the clip's own labels and headings, and leaves an answer unticked, with the reason, when:
+
+- it isn't in the clip (**AI-written**);
+- the clip labels it for something else ("Saving Throws DEX +6" offered as Legendary Actions);
+- it sits under a different heading, or under a heading that names another field.
+
+The page name is never put in a field. Fields the clip doesn't state but another field decides, such as Initiative from the Dexterity modifier, are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
 
 ## Where your API key is kept
 
@@ -86,6 +92,7 @@ npm run build             # the extension, into dist/extension (add -- --zip for
 npm run e2e               # loads the built extension in Chromium and clips into your project
 npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
 npm run phase4:templates  # fills the project's Statblock and God templates from real clips (AI cases need OPENROUTER_API_KEY)
+npm run eval:ai           # scores the AI's fills of saved clips: right, missed, caught by the checks, wrong (needs OPENROUTER_API_KEY)
 npm run poc               # the Phase 1 API proof of concept
 ```
 

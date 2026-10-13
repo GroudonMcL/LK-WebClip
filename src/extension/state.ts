@@ -1,5 +1,6 @@
 import type { Capture } from '../clip/importClip.js'
-import { DEFAULT_SYNONYMS } from '../fill/labels.js'
+import { DEFAULT_DERIVED } from '../fill/derived.js'
+import { DEFAULT_SYNONYMS, SYNONYMS_VERSION } from '../fill/labels.js'
 import type { FillMode, SavedRule } from '../fill/plan.js'
 import type { IndexedResource } from '../lk/projectIndex.js'
 
@@ -34,6 +35,10 @@ export interface TemplateSettings {
   keepUnfilled: boolean
   /** Synonym groups for label matching. */
   synonyms: string[][]
+  /** Which version of the default synonyms the list has seen, so new defaults can be added once. */
+  synonymsVersion: number
+  /** Worked-out fields, one rule per line ("Initiative = Dexterity modifier"). */
+  derived: string
   openRouterKey: string
   /** A free model id (ending in ":free"). */
   openRouterModel: string
@@ -48,6 +53,8 @@ export const DEFAULT_TEMPLATE_SETTINGS: TemplateSettings = {
   fillMode: 'labels',
   keepUnfilled: true,
   synonyms: DEFAULT_SYNONYMS,
+  synonymsVersion: SYNONYMS_VERSION,
+  derived: DEFAULT_DERIVED,
   openRouterKey: '',
   openRouterModel: '',
   openRouterWarned: false,
@@ -111,7 +118,21 @@ export interface PendingCapture {
 export async function loadSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings')
   const stored = settings as Partial<Settings> | undefined
-  return { ...DEFAULT_SETTINGS, ...stored, templates: { ...DEFAULT_TEMPLATE_SETTINGS, ...stored?.templates } }
+  const templates = { ...DEFAULT_TEMPLATE_SETTINGS, ...stored?.templates }
+  if (stored?.templates && (stored.templates.synonymsVersion ?? 1) < SYNONYMS_VERSION) {
+    templates.synonyms = withNewDefaults(templates.synonyms)
+    templates.synonymsVersion = SYNONYMS_VERSION
+  }
+  return { ...DEFAULT_SETTINGS, ...stored, templates }
+}
+
+/**
+ * Adds default synonym groups that came with an update to a saved list, unless the list already
+ * mentions one of their labels (you may have changed or removed that group on purpose).
+ */
+export function withNewDefaults(groups: string[][]): string[][] {
+  const known = new Set(groups.flat().map((label) => label.toLowerCase()))
+  return [...groups, ...DEFAULT_SYNONYMS.filter((group) => !group.some((label) => known.has(label.toLowerCase())))]
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
