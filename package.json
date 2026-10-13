@@ -1,0 +1,23 @@
+{
+  "name": "lk-webclip",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LegendKeeper web clipper — Phase 1: LegendKeeper API proof of concept",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "poc": "node --env-file-if-exists=.env --import tsx scripts/poc.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-reporter=spec test/*.test.ts"
+  },
+  "dependencies": {
+    "@legendkeeper/sdk": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
