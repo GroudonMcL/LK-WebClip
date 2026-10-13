@@ -1,45 +1,77 @@
 # LK Web Clipper
 
-A lightweight Chrome web clipper for [LegendKeeper](https://www.legendkeeper.com): select content on a webpage, right-click **Send to LegendKeeper**, choose where it goes and which Source it came from, and it lands in your campaign wiki as native, linked LegendKeeper content.
+A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com). Select something on a web page, right-click it and choose **Send to LegendKeeper**. A side panel opens where you choose where the clip goes and which Source it came from, check a preview and import it. The clip arrives as native LegendKeeper content: headings, lists, tables and images included, with a `From <Source>` heading that links the clip to its Source page.
+
+<p>
+  <img src="docs/screenshots/new-page-form.png" alt="The side panel with a stat block clipped to a new page" width="300">
+  <img src="docs/screenshots/append-form.png" alt="Adding an image to an existing page" width="300">
+</p>
 
 ## Status
 
 | Phase | Scope | State |
 | --- | --- | --- |
-| 1 | Prove the LegendKeeper API integration | **Done**. See [docs/PHASE1.md](docs/PHASE1.md) |
-| 2 | Chrome extension: context menu, side panel, capture, preview and import | Next |
-| 3 | Cached resource index, fuzzy search, automatic linking | |
-| 4 | Tables, images, source-name detection, Source deduplication | |
-| 5 | Reliability: retries, conflicts, duplicate protection, remembered defaults | |
+| 1 | Prove the LegendKeeper API integration | **Done.** See [docs/PHASE1.md](docs/PHASE1.md) |
+| 2 | Chrome extension: context menu, side panel, capture, preview and import | **Done.** See [docs/PHASE2.md](docs/PHASE2.md) |
+| 3 | Fuzzy search, automatic links for plain text, smarter index refresh | Next |
+| 4 | Complex tables, site-specific rules, Source deduplication | |
+| 5 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
-## Layout
+## Install
 
-```
-src/lk/            LegendKeeper integration. Uses only fetch and the SDK, so it runs in Node or an extension service worker.
-  client.ts        API keys → project connections (one key per project)
-  projectIndex.ts  In-memory resource tree: paths, aliases, tags, writable documents
-  search.ts        Ranked search: exact name → prefix → word → alias → tag → page content
-  sources.ts       Source pages with a Backlinks collection, the "From <Source>" heading, website names
-  pages.ts         Create a clip page; append a clip with versioned, conflict-safe writes
-  images.ts        Fetch a web image, check it, upload it as a project asset, fall back to a link
-  errors.ts        API errors explained in plain words
-scripts/poc.ts     Phase 1 proof of concept, run against a real project
-test/              Offline unit tests
-docs/              Phase 1 findings and the latest proof-of-concept output
-```
+1. Get the extension: download `lk-web-clipper-<version>.zip` and unzip it, or build it yourself with `npm install && npm run build`, which writes it to `dist/extension`.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode** (top right) and click **Load unpacked**. Choose the unzipped folder (or `dist/extension`).
+3. Pin **LegendKeeper Clipper** from the extensions menu if you like. Clicking its icon opens the side panel.
+4. In the side panel's Settings, paste an API key and click **Connect**. You create the key in LegendKeeper under **Project Settings → Developers → API Keys** (the project owner needs a paid plan). Add one key per project. If you add more than one, a project picker appears.
+5. Check the **Sources page**. If your project has a top-level page called "Sources", it is chosen for you. New Sources are created under this page, and pages under it or tagged `Source` count as Sources.
 
-## Running
+## Use
+
+- **Selection:** highlight text (with any images, tables and links in it), right-click and choose **Send to LegendKeeper**.
+- **Image or link:** right-click it and choose **Send to LegendKeeper**.
+- **Whole article:** right-click empty space on the page and choose **Send to LegendKeeper**, or click **Clip this page’s article** in the panel. From a selection, **Use the whole article instead** switches to the full article.
+
+Then in the panel:
+
+- **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Search matches page names first, then aliases and tags, then page text. Each result shows where the page sits in your tree.
+- **Source:**
+  - **This website** uses the site's own name (e.g. "D&D Beyond"). If a Source with that name already exists, you choose between reusing it and creating another.
+  - **A Source** picks one of your existing Sources.
+  - **New Source** creates one with the name you give it.
+
+  Each new Source page gets a Backlinks collection, so it lists every page that cites it.
+- **Link to my pages:** a link whose text is exactly the name or alias of one of your pages becomes a LegendKeeper link to that page. If several pages share the name, the link is left as it was and the panel tells you.
+- **Import images:** copies each image into your project's asset library (folder "LK Web Clipper"). If an image can't be copied, the clip keeps a link to it instead.
+- Check the **Preview** and click **Create page** or **Add to page**. When you add to a page, the clip goes at the end after a divider. Your existing content is never overwritten: if someone edits the page at the same moment, the clipper re-reads it and tries again.
+
+The panel remembers your last destination and Source for each project, so repeated clipping is a right-click and one click.
+
+## Where your API key is kept
+
+The key is stored in the extension's own storage (`chrome.storage.local`). The pages you clip can't read it, and the capture script that runs in those pages never sees it. Only the side panel uses it, to talk to LegendKeeper directly. No other server is involved. The extension asks to read all sites so it can capture from any page and copy images from wherever they are hosted.
+
+## Development
 
 Needs Node 22.9 or later.
 
 ```sh
 npm install
-cp .env.example .env      # then put your LegendKeeper API key in .env
-npm test                  # offline unit tests
+cp .env.example .env      # put a LegendKeeper API key in .env (for the live checks only)
+npm test                  # offline unit tests (converter, link resolution, index, search)
 npm run typecheck
-npm run poc               # writes test pages under "LK Web Clipper Sandbox" in your project
+npm run build             # the extension, into dist/extension (add -- --zip for a zip)
+npm run e2e               # loads the built extension in Chromium and clips into your project
+npm run phase2:import     # converts real web pages and imports them through the same pipeline
+npm run poc               # the Phase 1 API proof of concept
 ```
 
-An API key comes from **Project Settings → Developers → API Keys** in LegendKeeper. The project owner needs a paid plan. The proof of concept creates its sandbox page at the top level, which needs an **ADMIN** key. The finished clipper will work with a MEMBER key that can edit the pages you clip into.
+The live checks write only under the page **LK Web Clipper Sandbox** and never delete anything.
 
-`npm run poc` never deletes anything. Each run adds a `Phase 1 run <time>` page under the sandbox so you can look at the result in LegendKeeper. It also uploads one image to an asset folder called `LK Web Clipper`.
+```
+src/lk/          LegendKeeper integration: client, project index, search, Sources, pages, images, errors
+src/clip/        HTML → LegendKeeper blocks, link resolution, preview rendering, the import pipeline
+src/extension/   The Chrome extension: background worker, capture script, side panel
+scripts/         Build, end-to-end test and live checks
+test/            Unit tests and the HTML fixture
+docs/            Phase notes, the Phase 1 output and side-panel screenshots
+```

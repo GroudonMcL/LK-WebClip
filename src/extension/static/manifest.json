@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "LegendKeeper Clipper",
+  "short_name": "LK Clipper",
+  "description": "Clip text, images, tables and articles from any web page into your LegendKeeper wiki, with Sources and links to your pages.",
+  "version": "0.2.0",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": { "default_title": "LegendKeeper Clipper", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "permissions": ["contextMenus", "sidePanel", "storage", "unlimitedStorage", "scripting", "activeTab"],
+  "host_permissions": ["<all_urls>"]
+}

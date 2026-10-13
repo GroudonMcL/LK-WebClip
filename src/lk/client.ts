@@ -18,11 +18,19 @@ export function configuredKeys(env: Record<string, string | undefined>): string[
   return [...new Set(keys)]
 }
 
+/**
+ * A client for one API key. The fetch wrapper matters in browsers: the SDK calls the function it
+ * stores without `window` as its receiver, which Chrome rejects with "Illegal invocation".
+ */
+export function createClient(apiKey: string, { maxRetries = 3 }: { maxRetries?: number } = {}): LegendKeeper {
+  return new LegendKeeper({ apiKey, maxRetries, fetch: (url, init) => globalThis.fetch(url, init) })
+}
+
 /** Connects every key and names its project, so the UI can skip the project picker when there is one. */
 export async function connectProjects(keys: string[]): Promise<ProjectConnection[]> {
   return Promise.all(
     keys.map(async (apiKey) => {
-      const lk = new LegendKeeper({ apiKey, maxRetries: 3 })
+      const lk = createClient(apiKey)
       const project = await lk.project()
       return { id: project.id, name: project.name ?? project.id, lk }
     }),
