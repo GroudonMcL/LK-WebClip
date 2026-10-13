@@ -5,7 +5,8 @@
  *
  * Loads dist/extension, opens the side panel page, connects the API key through the Settings
  * screen, then clips from a local test page three ways (a selection to a new page, a right-clicked
- * image appended to that page, and the whole article to a new page). Chrome's context menu cannot
+ * image appended to that page, and the whole article to a new page), and finally fills the
+ * project's Statblock Template from a D&D Beyond stat block, as a new page and appended to a page. Chrome's context menu cannot
  * be clicked by automation, so the test calls the same function the menu click calls.
  *
  * Pages go under "LK Web Clipper Sandbox / Phase 2 E2E <time>" and are not deleted. Screenshots of
@@ -18,6 +19,7 @@ import { join } from 'node:path'
 import { LegendKeeper } from '@legendkeeper/sdk'
 import { p, walk, type Block } from '@legendkeeper/sdk/blocks'
 import { chromium, type Page, type Worker } from 'playwright'
+import { blockText, type AnyBlock } from '../src/fill/template.js'
 import { ProjectIndex, configuredKeys, createPage } from '../src/index.js'
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
@@ -41,9 +43,14 @@ console.log(`Run page: ${index.path(run.resource.id)}`)
 
 // ------------------------------------------------------------------------ local test site
 const fixture = await readFile(new URL('test/fixtures/statblock.html', root), 'utf8')
+const goblinBlock = await readFile(new URL('test/fixtures/dndbeyond-goblin.html', root), 'utf8')
 const dragonPng = await readFile(new URL('src/extension/static/icons/icon-128.png', root))
 const server = createServer((req, res) => {
   if (req.url === '/dragon.png') return res.writeHead(200, { 'content-type': 'image/png' }).end(dragonPng)
+  if (req.url === '/monsters/goblin') {
+    return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      .end(`<!doctype html><html><head><title>Goblin - Monsters - D&amp;D Beyond</title><meta property="og:site_name" content="D&amp;D Beyond"></head><body><main id="content">${goblinBlock}</main></body></html>`)
+  }
   const html = fixture.replace('</body>', '<p><img id="art" src="/dragon.png" alt="Red dragon sigil"></p></body>')
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html)
 })
@@ -183,6 +190,95 @@ try {
   const page2 = await readPage(resourceIdFrom(await panel.getByRole('link', { name: 'Open in LegendKeeper' }).getAttribute('href')))
   check(page2.parentId === run.resource.id, 'the article page went under the remembered parent')
   check(kinds(page2.blocks).filter((k) => k === 'heading').length >= 3, `the article kept its headings (${page2.blocks.length} top-level blocks)`)
+
+  // 5. Templates: the goblin stat block into the Statblock Template, labels then (on-device) AI.
+  console.log('\n▶ Templates: stat block → Statblock Template, then appended to a page')
+  // Chromium here has no built-in model, so the panel gets a stand-in with the Prompt API's shape.
+  // It answers like the model would: the block holding the creature type goes in that field.
+  // (A string, because the test runner rewrites functions it sends to the page.)
+  await panel.evaluate(`globalThis.LanguageModel = {
+    availability: async () => 'available',
+    params: async () => ({ defaultTopK: 3, maxTopK: 8, defaultTemperature: 1, maxTemperature: 2 }),
+    create: async () => ({
+      contextWindow: 4096,
+      destroy() {},
+      async prompt(input) {
+        const block = /\\[(\\d+)\\] \\(paragraph\\) Small Humanoid/.exec(input)?.[1]
+        const keys = [...input.matchAll(/^(s\\d+): "([^"]+)"/gm)]
+        return JSON.stringify(Object.fromEntries(keys.map(([, key, label]) => [key, { blocks: label.startsWith('Size') && block ? [Number(block)] : [], value: '' }])))
+      },
+    }),
+  }`)
+  await panel.locator('#open-settings').click()
+  await panel.getByText('Enable template filling').click()
+  await panel.getByRole('combobox').filter({ has: panel.locator('option', { hasText: 'On-device' }) }).selectOption('on-device')
+  await panel.getByText('Ready. It runs on this computer').waitFor()
+  check(true, 'Settings show the on-device model as ready')
+  await panel.screenshot({ path: `${shots}template-settings.png`, fullPage: true })
+  await panel.getByRole('button', { name: 'Done' }).click()
+
+  const site2 = await context.newPage()
+  await site2.goto(`${site}/monsters/goblin`)
+  await site2.evaluate(() => {
+    const range = document.createRange()
+    range.selectNodeContents(document.querySelector('.mon-stat-block')!)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+  })
+  const goblinTab = await tabIdFor(worker, `${site}/monsters/goblin`)
+  await worker.evaluate(async ([id]) => (globalThis as any).__lkTest.captureFromMenu({ selectionText: 'Goblin', frameId: 0 }, id), [goblinTab] as const)
+  await panel.getByText('Selection', { exact: true }).waitFor()
+  await panel.getByRole('radio', { name: 'New page' }).click()
+  await panel.getByPlaceholder('Name of the new page').fill('Goblin')
+  await pick(panel, 'Search for the parent page…', runName)
+  const statblockTemplate = [...index.byId.values()].find((r) => r.name === 'Statblock Template' && index.isTemplate(r.id))!
+  await panel.locator('.field', { hasText: 'Template' }).locator('select').first().selectOption(statblockTemplate.id)
+  await panel.getByRole('radio', { name: 'Labels then AI' }).click()
+  await panel.getByText('Keep unfilled template fields').click()
+  const fields = panel.locator('.template-fields')
+  await panel.locator('.template-ai').getByText(/suggested 1 of/).waitFor({ timeout: 30_000 })
+  check(true, `the on-device AI was asked: ${(await panel.locator('.template-ai').innerText()).split('\n')[0]}`)
+  const sizeRow = fields.locator('li[data-slot^="Size, Creature Type"]')
+  check((await sizeRow.locator('.origin').innerText()) === 'AI' && (await sizeRow.innerText()).includes('Small Humanoid'), 'the creature type line came from the AI')
+  check((await fields.locator('li[data-slot="Armour Class"] .origin').innerText()) === 'Synonym', '"Armor Class" filled Armour Class through a synonym')
+  // A manual choice, remembered as a rule for this site.
+  const legendary = fields.locator('li[data-slot="Legendary Actions"]')
+  await fields.locator('summary.empty-slots').click()
+  const shortbow = await legendary.locator('option', { hasText: '“Shortbow”' }).getAttribute('value')
+  await legendary.locator('select').selectOption(shortbow!)
+  await fields.locator('li[data-slot="Legendary Actions"]').getByText(/Remember for 127\.0\.0\.1/).click()
+  const summaryLine = await fields.locator('summary').first().innerText()
+  console.log(`  ${summaryLine}`)
+  await panel.screenshot({ path: `${shots}template-review.png`, fullPage: true })
+  await panel.getByRole('button', { name: 'Create page' }).click()
+  await panel.getByText('Page created').waitFor({ timeout: 90_000 })
+  const goblinId = resourceIdFrom(await panel.getByRole('link', { name: 'Open in LegendKeeper' }).getAttribute('href'))
+  const goblinRes = await lk.resources.get({ resourceId: goblinId })
+  const goblinPage = await readPage(goblinId)
+  const goblinJson = JSON.stringify(goblinPage.blocks)
+  // Page names in the values are links now, so read the text with their names.
+  const goblinText = goblinPage.blocks.map((b) => blockText(b as AnyBlock)).join('\n')
+  check((goblinRes.tags ?? []).includes('Statblock') && goblinRes.parentId === run.resource.id, 'the page was made from the Statblock Template under the run page')
+  check(goblinText.includes('Armour Class: 15 (leather armor, shield)') && goblinText.includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the infobox holds the AC and the AI’s creature type')
+  check(!goblinJson.includes('Bonus Actions') && !goblinText.includes('[Description text]'), 'unfilled fields were removed')
+  const field = (title: string) => goblinPage.blocks.find((b) => b.kind === 'textField' && b.title === title)
+  check(blockText(field('Legendary Actions') as AnyBlock).startsWith('Shortbow.'), 'the manual choice went into Legendary Actions, with its name')
+  check(blockText(field('Actions') as AnyBlock).startsWith('Scimitar.') && !blockText(field('Actions') as AnyBlock).includes('Shortbow'), 'Actions kept the rest of its section')
+
+  // The same clip appended to an existing page, with the credit heading switched off.
+  await panel.getByRole('button', { name: 'Back to this clip' }).click()
+  await panel.getByRole('radio', { name: 'Add to a page' }).click()
+  await pick(panel, 'Search for the page to add to…', title, runName)
+  await panel.getByText('Add a “From <Source>” heading').click()
+  const before = (await readPage(newPageId)).blocks.length
+  await panel.getByRole('button', { name: 'Add to page' }).click()
+  await panel.getByText('Added to the page').waitFor({ timeout: 60_000 })
+  const appendedTail = (await readPage(newPageId)).blocks.slice(before)
+  check(appendedTail[0]?.kind === 'rule' && appendedTail[1]?.kind === 'infobox', 'the template went below the existing content, after a divider')
+  check(!appendedTail.some((b) => headingText(b).startsWith('From ')), 'no “From” heading when the credit is off')
+
+  await panel.locator('#open-settings').click()
+  check(await panel.getByText('“Shortbow” → “Legendary Actions”').isVisible(), 'the remembered choice is listed under Saved rules')
 } catch (error) {
   failures++
   console.log(`  ✘ ${error instanceof Error ? error.message.split('\n')[0] : error}`)

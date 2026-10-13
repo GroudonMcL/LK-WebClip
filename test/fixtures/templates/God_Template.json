@@ -1,0 +1,176 @@
+{
+ "id": "gudd35fc",
+ "name": "God Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:18:47.071Z",
+ "tags": [
+  "God",
+  "Entity"
+ ],
+ "properties": [
+  {
+   "id": "fajbp2j6",
+   "rank": "U",
+   "title": "TAGS",
+   "kind": "unsupported"
+  },
+  {
+   "id": "b9oyk4jg",
+   "rank": "V",
+   "title": "IMAGE",
+   "isTitleHidden": true,
+   "kind": "image",
+   "url": ""
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "rows": [
+      {
+       "id": "l6t1rqed",
+       "rank": "Q",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Alignment",
+         "content": [],
+         "text": "",
+         "id": "c7qeyv68",
+         "rank": "U"
+        },
+        {
+         "key": "Portfolio",
+         "content": [],
+         "text": "",
+         "id": "byeqb905",
+         "rank": "W"
+        },
+        {
+         "key": "Domain Name and Location",
+         "content": [],
+         "text": "",
+         "id": "pn8ojn6n",
+         "rank": "^"
+        },
+        {
+         "key": "Allies",
+         "content": [],
+         "text": "",
+         "id": "t3ep5nwn",
+         "rank": "a"
+        },
+        {
+         "key": "Foes",
+         "content": [],
+         "text": "",
+         "id": "o2sfsr06",
+         "rank": "c"
+        },
+        {
+         "key": "Pantheon",
+         "content": [],
+         "text": "",
+         "id": "blhdxw0a",
+         "rank": "_"
+        },
+        {
+         "key": "Weapon",
+         "content": [],
+         "text": "",
+         "id": "wziajj5p",
+         "rank": "d"
+        }
+       ],
+       "display": "list"
+      },
+      {
+       "id": "bwnu0umr",
+       "rank": "PQ",
+       "title": "TEXT",
+       "isTitleHidden": true,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": [
+          {
+           "text": "[Holy symbol description]",
+           "italic": true
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "mmgrxxzn",
+       "rank": "Pc",
+       "title": "Titles and Aliases",
+       "isTitleHidden": false,
+       "kind": "unsupported"
+      }
+     ]
+    },
+    {
+     "kind": "quote",
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Manifesto, Dogma, or Quote]",
+         "italic": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Overview text]",
+       "italic": true
+      }
+     ]
+    },
+    {
+     "kind": "rule"
+    },
+    {
+     "kind": "heading",
+     "level": 1,
+     "content": [
+      {
+       "text": "From ["
+      },
+      {
+       "text": "Source]",
+       "italic": true
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Source text]",
+       "italic": true
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  }
+ ]
+}

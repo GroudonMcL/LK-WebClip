@@ -1,6 +1,6 @@
 {
   "name": "lk-webclip",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "LegendKeeper web clipper: a Chrome extension that clips web content into LegendKeeper",
   "type": "module",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test --test-reporter=spec test/*.test.ts",
     "build": "tsx scripts/build-extension.ts",
+    "phase4:templates": "node --env-file-if-exists=.env --import tsx scripts/phase4-templates.ts",
     "e2e": "node --env-file-if-exists=.env --import tsx scripts/e2e.ts"
   },
   "dependencies": {

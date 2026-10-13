@@ -56,6 +56,8 @@ function capture(request: CaptureRequest): Capture {
 
   // The page's main content, the way reader modes find it.
   const clone = document.cloneNode(true) as Document
+  // Readability drops class names, so remove page furniture it would keep as text ("[edit]") first.
+  for (const furniture of Array.from(clone.querySelectorAll('.mw-editsection'))) furniture.remove()
   const article = new Readability(clone, { keepClasses: false }).parse()
   if (article?.content) {
     return { ...base, kind: 'article', html: article.content, text: article.textContent ?? '', suggestedTitle: preferHeading(article.title?.trim()) || pageTitle() }

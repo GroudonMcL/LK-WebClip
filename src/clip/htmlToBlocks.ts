@@ -283,6 +283,8 @@ function convertImage(el: Element, out: BlockBuilder, context: Context): void {
     return
   }
   const alt = collapse(el.getAttribute('alt') ?? el.getAttribute('title') ?? '').trim()
+  // An SVG with no description is decoration (D&D Beyond's stat block dividers), and LegendKeeper can't take SVG uploads.
+  if (!alt && /\.svg(\?|#|$)/i.test(src)) return
   context.images.push({ src, alt })
   // The URL is the original for now; the importer swaps in the uploaded asset's URL.
   out.addBlock({ kind: 'image', url: src, ...(alt ? { alt } : {}) })
@@ -490,8 +492,12 @@ function collapse(text: string): string {
   return text.replace(/[ \t\n\r\f]+/g, ' ')
 }
 
+/** Page furniture that is never content: wiki "[edit]" links. */
+const FURNITURE = /(^|\s)(mw-editsection|mw-editsection-bracket)(\s|$)/
+
 function isHidden(el: Element): boolean {
   if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') return true
+  if (FURNITURE.test(el.getAttribute('class') ?? '')) return true
   const style = el.getAttribute('style') ?? ''
   return /display\s*:\s*none|visibility\s*:\s*hidden/i.test(style)
 }

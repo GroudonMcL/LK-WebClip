@@ -14,8 +14,9 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 | 1 | Prove the LegendKeeper API integration | **Done.** See [docs/PHASE1.md](docs/PHASE1.md) |
 | 2 | Chrome extension: context menu, side panel, capture, preview and import | **Done.** See [docs/PHASE2.md](docs/PHASE2.md) |
 | 3 | Fuzzy search, linking page names in the text, ambiguity handling, keeping the page list fresh | **Done.** See [docs/PHASE3.md](docs/PHASE3.md) |
-| 4 | Complex tables, site-specific rules, Source deduplication | Next |
-| 5 | Reliability: retries, duplicate protection, reviewing uncertain links | |
+| 4 | Template filling: fill your LegendKeeper templates from a clip, by label matching and optional AI | **Done.** See [docs/PHASE4.md](docs/PHASE4.md) |
+| 5 | Complex tables, site-specific rules, Source deduplication | Next |
+| 6 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
 ## Install
 
@@ -34,7 +35,14 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 Then in the panel:
 
 - **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Search forgives typos and word order (“grayhawk”, “dragon red”). It lists page names first, then aliases, then tags, then pages whose text matches; `#tag` lists every page with that tag. Each result shows where the page sits in your tree.
+- **Template** (when **Settings → Templates → Enable template filling** is on): pick one of your LegendKeeper templates, or leave it at “None (clip as usual)”.
+  - For a **new page**, the page is made from the template and its fields are filled in from the clip. For **Add to a page**, the template’s main tab is filled in and added below the existing content, after a divider. Child pages of templates are not copied.
+  - **Fill with**: **Labels** finds the template’s labels in the clip (“Armor Class 15”, a “Traits” heading, “STR / 8 (-1)”, table rows, “Label: value”), using synonyms such as AC = Armour Class. **AI** asks a language model to pick the parts of the clip for each field. **Labels then AI** asks the AI only about what labels left empty.
+  - The **Template fields** list shows each field, its value and where it came from (Label, Synonym, Saved rule, AI…). Untick a value to leave it out, or **Change** it to another part of the clip or a typed value. A field that several labels fit is never guessed. When you pick a value yourself, you can **Remember** it for that website; saved rules are listed in Settings.
+  - **Keep unfilled template fields**: on keeps the template’s placeholder text where nothing was found; off removes those fields.
+  - Anything in the clip that didn’t go in a field is added at the end. If the template has its own “From [Source]” heading, the credit and the rest of the clip go there.
 - **Source:**
+  - **Add a “From <Source>” heading** credits the clip with a heading linking to its Source page. Untick it to clip without a credit (and without a Source).
   - **This website** uses the site's own name (e.g. "D&D Beyond"). If a Source with that name already exists, you choose between reusing it and creating another.
   - **A Source** picks one of your existing Sources.
   - **New Source** creates one with the name you give it.
@@ -52,9 +60,18 @@ In **Settings → Linking** you can turn off case matching, and choose whether o
 
 The page list refreshes itself: when the panel opens or comes back into view after 10 minutes, every 10 minutes while it is open, and when a search turns up a page the list doesn't have. ⟳ refreshes it immediately, and a refresh never resets what you have filled in.
 
+## AI (optional, off by default)
+
+AI assist is only used for template filling, and only if you turn it on in **Settings → Templates**:
+
+- **On-device** (recommended): Chrome’s built-in model (Gemini Nano). It runs on your computer and sends nothing anywhere. It needs Chrome 138 or later and a computer that meets Google’s requirements (22 GB free disk, and a graphics card with more than 4 GB of memory or 16 GB of RAM). **Set up on-device AI** in Settings downloads the model once; `chrome://on-device-internals` shows whether your computer can run it.
+- **OpenRouter**: for computers that can’t run the on-device model. Paste your own OpenRouter key; only free models (ids ending in `:free`) are offered or used. This sends the clip’s text to OpenRouter and the model’s provider, so the clipper asks you to confirm before switching it on.
+
+The AI never writes LegendKeeper content. It only says which parts of the clip go in which field (or copies a short value), the clipper checks every answer (a value that isn’t in the clip is flagged **AI-written** and left unticked), and you review everything before importing.
+
 ## Where your API key is kept
 
-The key is stored in the extension's own storage (`chrome.storage.local`). The pages you clip can't read it, and the capture script that runs in those pages never sees it. Only the side panel uses it, to talk to LegendKeeper directly. No other server is involved. The extension asks to read all sites so it can capture from any page and copy images from wherever they are hosted.
+The key is stored in the extension's own storage (`chrome.storage.local`). The pages you clip can't read it, and the capture script that runs in those pages never sees it. Only the side panel uses it, to talk to LegendKeeper directly. No other server is involved, unless you switch on the OpenRouter AI engine (see above); its key is stored the same way. The extension asks to read all sites so it can capture from any page and copy images from wherever they are hosted.
 
 ## Development
 
@@ -68,14 +85,16 @@ npm run typecheck
 npm run build             # the extension, into dist/extension (add -- --zip for a zip)
 npm run e2e               # loads the built extension in Chromium and clips into your project
 npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
+npm run phase4:templates  # fills the project's Statblock and God templates from real clips (AI cases need OPENROUTER_API_KEY)
 npm run poc               # the Phase 1 API proof of concept
 ```
 
 The live checks write only under the page **LK Web Clipper Sandbox** and never delete anything.
 
 ```
-src/lk/          LegendKeeper integration: client, project index, search, Sources, pages, images, errors
+src/lk/          LegendKeeper integration: client, project index, search, Sources, pages, templates, images, errors
 src/clip/        HTML → LegendKeeper blocks, link resolution, preview rendering, the import pipeline
+src/fill/        Template filling: slots, clip candidates, label matching, AI jobs and engines, composing the page
 src/extension/   The Chrome extension: background worker, capture script, side panel
 scripts/         Build, end-to-end test and live checks
 test/            Unit tests and the HTML fixture

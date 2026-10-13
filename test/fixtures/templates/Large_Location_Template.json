@@ -1,0 +1,241 @@
+{
+ "id": "e8xctpaj",
+ "name": "Large Location Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:16:08.561Z",
+ "tags": [
+  "Location"
+ ],
+ "properties": [],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "heading",
+     "level": 1,
+     "content": [
+      {
+       "text": "From [Source]"
+      }
+     ]
+    },
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "width": 24,
+     "rows": [
+      {
+       "id": "a06h4uac",
+       "rank": "S",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Government",
+         "content": [],
+         "text": "",
+         "id": "rduchem0",
+         "rank": "O"
+        },
+        {
+         "key": "Capital",
+         "content": [],
+         "text": "",
+         "id": "u838byek",
+         "rank": "S"
+        },
+        {
+         "key": "Major Towns",
+         "content": [],
+         "text": "",
+         "id": "a2sd0vlv",
+         "rank": "X"
+        },
+        {
+         "key": "Provinces",
+         "content": [],
+         "text": "",
+         "id": "lhnc9krt",
+         "rank": "Z"
+        },
+        {
+         "key": "Resources",
+         "content": [],
+         "text": "",
+         "id": "rkvs3eo3",
+         "rank": "^"
+        },
+        {
+         "key": "Coinage",
+         "content": [],
+         "text": "",
+         "id": "s0gseib1",
+         "rank": "a"
+        },
+        {
+         "key": "Population",
+         "content": [],
+         "text": "",
+         "id": "kkwo7bqk",
+         "rank": "e"
+        },
+        {
+         "key": "Languages",
+         "content": [],
+         "text": "",
+         "id": "ff6hff9t",
+         "rank": "j"
+        },
+        {
+         "key": "Allies",
+         "content": [],
+         "text": "",
+         "id": "dcnmnh3b",
+         "rank": "m"
+        },
+        {
+         "key": "Enemies",
+         "content": [],
+         "text": "",
+         "id": "e0epnxej",
+         "rank": "o"
+        },
+        {
+         "key": "Alignment",
+         "content": [],
+         "text": "",
+         "id": "h77u4qp9",
+         "rank": "k"
+        },
+        {
+         "key": "Religions",
+         "content": [],
+         "text": "",
+         "id": "pgkg75tb",
+         "rank": "lQ"
+        },
+        {
+         "key": "Ruler",
+         "content": [
+          {
+           "text": "[Ruler Title; Name, Race, Class and Level (Subclass)]"
+          }
+         ],
+         "text": "[Ruler Title; Name, Race, Class and Level (Subclass)]",
+         "id": "p55rswii",
+         "rank": "L"
+        }
+       ],
+       "display": "inline"
+      },
+      {
+       "id": "ex0ndz9u",
+       "rank": "W",
+       "title": "Location",
+       "isTitleHidden": true,
+       "kind": "map"
+      },
+      {
+       "id": "tdtrl64v",
+       "rank": "P",
+       "title": "Location name and proper name and variants",
+       "isTitleHidden": true,
+       "kind": "unsupported"
+      },
+      {
+       "id": "q4ry5ftg",
+       "rank": "Y",
+       "title": "TAGS",
+       "isTitleHidden": false,
+       "kind": "unsupported"
+      }
+     ]
+    },
+    {
+     "kind": "infobox",
+     "layout": "wrapRight",
+     "width": 22,
+     "rows": [
+      {
+       "id": "v8xptxh6",
+       "rank": "R",
+       "title": "SUBPAGEs",
+       "isTitleHidden": false,
+       "kind": "resourceCollection",
+       "filter": {
+        "type": "filter",
+        "filterType": "field",
+        "id": "subpages",
+        "field": "parentId",
+        "operator": "equals",
+        "value": "$self"
+       }
+      },
+      {
+       "id": "rjjhhlxo",
+       "rank": "V",
+       "title": "Backlinks",
+       "isTitleHidden": false,
+       "kind": "resourceCollection",
+       "filter": {
+        "type": "filter",
+        "filterType": "field",
+        "id": "backlinks",
+        "scope": "edges",
+        "field": "targetId",
+        "operator": "equals",
+        "value": "$self"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "Overview"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Overview text]"
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "History"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[History text]"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  },
+  {
+   "name": "DM",
+   "type": "page",
+   "blocks": []
+  }
+ ]
+}

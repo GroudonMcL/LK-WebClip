@@ -1,0 +1,348 @@
+{
+ "id": "l1ylm24t",
+ "name": "Statblock Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:17:28.047Z",
+ "tags": [
+  "Creature",
+  "Statblock"
+ ],
+ "properties": [
+  {
+   "id": "y5t2eh0q",
+   "rank": "S",
+   "title": "TAGS",
+   "isTitleHidden": false,
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "width": 19,
+     "rows": [
+      {
+       "id": "axlxatr3",
+       "rank": "U",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Armour Class",
+         "content": [],
+         "text": "",
+         "id": "uyi47pta",
+         "rank": "R"
+        },
+        {
+         "key": "Initiative",
+         "content": [],
+         "text": "",
+         "id": "hjmbmj6e",
+         "rank": "W"
+        },
+        {
+         "key": "Hit Points",
+         "content": [],
+         "text": "",
+         "id": "hthobfyj",
+         "rank": "X"
+        },
+        {
+         "key": "Speed",
+         "content": [],
+         "text": "",
+         "id": "ihgzf5ji",
+         "rank": "Y"
+        }
+       ]
+      },
+      {
+       "id": "kacled59",
+       "rank": "Y",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Strength",
+         "content": [],
+         "text": "",
+         "id": "aob2u4gx",
+         "rank": "Q"
+        },
+        {
+         "key": "Intelligence",
+         "content": [],
+         "text": "",
+         "id": "wer90d12",
+         "rank": "V"
+        },
+        {
+         "key": "Dexterity",
+         "content": [],
+         "text": "",
+         "id": "e0mtrxvd",
+         "rank": "Z"
+        },
+        {
+         "key": "Wisdom",
+         "content": [],
+         "text": "",
+         "id": "taxg4vf8",
+         "rank": "\\"
+        },
+        {
+         "key": "Constitution",
+         "content": [],
+         "text": "",
+         "id": "toj0mc8q",
+         "rank": "_"
+        },
+        {
+         "key": "Charisma",
+         "content": [],
+         "text": "",
+         "id": "hw9uredz",
+         "rank": "`"
+        }
+       ],
+       "display": "grid"
+      },
+      {
+       "id": "kaqrp54c",
+       "rank": "\\",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Skills",
+         "content": [],
+         "text": "",
+         "id": "whhygq5n",
+         "rank": "R"
+        },
+        {
+         "key": "Resistances",
+         "content": [],
+         "text": "",
+         "id": "i51apa77",
+         "rank": "S"
+        },
+        {
+         "key": "Immunities",
+         "content": [],
+         "text": "",
+         "id": "xokyid1k",
+         "rank": "W"
+        },
+        {
+         "key": "Senses",
+         "content": [],
+         "text": "",
+         "id": "sqbmv1b4",
+         "rank": "X"
+        },
+        {
+         "key": "Languages",
+         "content": [],
+         "text": "",
+         "id": "f0mde2tr",
+         "rank": "["
+        },
+        {
+         "key": "Challenge Rating",
+         "content": [],
+         "text": "",
+         "id": "aa41bltu",
+         "rank": "_"
+        }
+       ],
+       "display": "inline"
+      },
+      {
+       "id": "hn502gre",
+       "rank": "_",
+       "title": "TAGS",
+       "isTitleHidden": true,
+       "kind": "unsupported"
+      },
+      {
+       "id": "rc0biqq0",
+       "rank": "b",
+       "title": "ALIASES",
+       "isTitleHidden": true,
+       "kind": "unsupported"
+      },
+      {
+       "id": "hc96wtez",
+       "rank": "R",
+       "title": "TEXT",
+       "isTitleHidden": true,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": [
+          {
+           "text": "[Size, e.g. Small] [Creature Type, e.g. Elemental], [Alignment, e.g. Neutral]",
+           "italic": true
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Traits",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Example Legendary Resistance (3/Day).",
+         "bold": true,
+         "italic": true
+        },
+        {
+         "text": " If the creature fails a saving throw, it can choose to succeed instead.]"
+        }
+       ]
+      },
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Example Magic Resistance.",
+         "bold": true,
+         "italic": true
+        },
+        {
+         "text": " The creature has "
+        },
+        {
+         "text": "Advantage",
+         "underline": true
+        },
+        {
+         "text": " on saving throws against spells and other magical effects.]"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Actions",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Example Multiattack.",
+         "bold": true,
+         "italic": true
+        },
+        {
+         "text": " The creature makes one Bite attack and three other attacks, using Claw or Tail in any combination.]"
+        }
+       ]
+      },
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Example Bite.",
+         "bold": true,
+         "italic": true
+        },
+        {
+         "text": " Melee Attack Roll:",
+         "italic": true
+        },
+        {
+         "text": " +19, reach 15 ft. "
+        },
+        {
+         "text": "Hit:",
+         "italic": true
+        },
+        {
+         "text": " 36 (4d12 + 10) Piercing damage, and the target has the "
+        },
+        {
+         "text": "Grappled",
+         "underline": true
+        },
+        {
+         "text": " condition (escape DC 20). Until the grapple ends, the target has the "
+        },
+        {
+         "text": "Restrained",
+         "underline": true
+        },
+        {
+         "text": " condition and can\u2019t teleport.]"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Bonus Actions",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Legendary Actions",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "rule"
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "Description"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Description text]",
+       "italic": true
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

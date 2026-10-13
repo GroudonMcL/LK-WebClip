@@ -1,4 +1,6 @@
 import type { Capture } from '../clip/importClip.js'
+import { DEFAULT_SYNONYMS } from '../fill/labels.js'
+import type { FillMode, SavedRule } from '../fill/plan.js'
 import type { IndexedResource } from '../lk/projectIndex.js'
 
 /**
@@ -14,6 +16,41 @@ export interface ProjectSettings {
   sourcesRootId?: string
   /** A tag that also marks a page as a Source. */
   sourceTag: string
+  /** Template rules taught on the review screen: on this site, this clip label goes in this slot. */
+  rules?: SavedRule[]
+}
+
+export type AiEngineChoice = 'off' | 'on-device' | 'openrouter'
+
+export interface TemplateSettings {
+  /** Shows the Template choice in the panel. Off: the panel works exactly as before. */
+  enabled: boolean
+  /** Fill slots by matching labels (no AI). */
+  labels: boolean
+  ai: AiEngineChoice
+  /** The last "Fill with" choice. */
+  fillMode: FillMode
+  /** Keep the template's placeholder in fields nothing was found for; otherwise remove those fields. */
+  keepUnfilled: boolean
+  /** Synonym groups for label matching. */
+  synonyms: string[][]
+  openRouterKey: string
+  /** A free model id (ending in ":free"). */
+  openRouterModel: string
+  /** The one-time warning that OpenRouter sends clips to a third party has been shown. */
+  openRouterWarned: boolean
+}
+
+export const DEFAULT_TEMPLATE_SETTINGS: TemplateSettings = {
+  enabled: false,
+  labels: true,
+  ai: 'off',
+  fillMode: 'labels',
+  keepUnfilled: true,
+  synonyms: DEFAULT_SYNONYMS,
+  openRouterKey: '',
+  openRouterModel: '',
+  openRouterWarned: false,
 }
 
 export interface Settings {
@@ -29,9 +66,22 @@ export interface Settings {
   firstOnly: boolean
   images: boolean
   assetFolder: string
+  /** Start each clip with a "From <Source>" heading that links to the Source page. */
+  sourceHeading: boolean
+  templates: TemplateSettings
 }
 
-export const DEFAULT_SETTINGS: Settings = { projects: [], linkify: true, linkText: true, matchCase: true, firstOnly: true, images: true, assetFolder: 'LK Web Clipper' }
+export const DEFAULT_SETTINGS: Settings = {
+  projects: [],
+  linkify: true,
+  linkText: true,
+  matchCase: true,
+  firstOnly: true,
+  images: true,
+  assetFolder: 'LK Web Clipper',
+  sourceHeading: true,
+  templates: DEFAULT_TEMPLATE_SETTINGS,
+}
 
 /** The last choices for a project, so repeated clipping needs only a right-click and Import. */
 export interface Remembered {
@@ -41,6 +91,8 @@ export interface Remembered {
   targetDocumentId?: string
   sourceMode: 'website' | 'existing' | 'new'
   sourceId?: string
+  /** The last template used with each Source (by Source id, or "site:<name>" for a website not yet a Source). */
+  templateBySource?: Record<string, string>
 }
 
 export interface CachedIndex {
@@ -58,7 +110,8 @@ export interface PendingCapture {
 
 export async function loadSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings')
-  return { ...DEFAULT_SETTINGS, ...(settings as Partial<Settings> | undefined) }
+  const stored = settings as Partial<Settings> | undefined
+  return { ...DEFAULT_SETTINGS, ...stored, templates: { ...DEFAULT_TEMPLATE_SETTINGS, ...stored?.templates } }
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

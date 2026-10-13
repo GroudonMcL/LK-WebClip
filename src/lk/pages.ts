@@ -8,14 +8,14 @@ export interface DocumentRef {
   documentId: string
 }
 
-/** The content of a new clip page: the Source heading, then the clipped blocks. */
-export function newPageClip(sourceId: string, content: Block[]): Block[] {
-  return [sourceHeading(sourceId), ...content]
+/** The content of a new clip page: the Source heading (unless the credit is off), then the clipped blocks. */
+export function newPageClip(sourceId: string | undefined, content: Block[]): Block[] {
+  return [...(sourceId ? [sourceHeading(sourceId)] : []), ...content]
 }
 
-/** What an append adds to the end of a page: a divider, the Source heading, then the clipped blocks. */
-export function appendedClip(sourceId: string, content: Block[]): Block[] {
-  return [rule(), sourceHeading(sourceId), ...content]
+/** What an append adds to the end of a page: a divider, the Source heading (unless the credit is off), then the clipped blocks. */
+export function appendedClip(sourceId: string | undefined, content: Block[]): Block[] {
+  return [rule(), ...(sourceId ? [sourceHeading(sourceId)] : []), ...content]
 }
 
 export async function createPage(

@@ -1,0 +1,129 @@
+{
+ "id": "uoedtxdt",
+ "name": "Other Location Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:22:13.529Z",
+ "tags": [
+  "Location"
+ ],
+ "properties": [],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "heading",
+     "level": 1,
+     "content": [
+      {
+       "text": "From [Source]"
+      }
+     ]
+    },
+    {
+     "kind": "infobox",
+     "layout": "wrapRight",
+     "width": 22,
+     "rows": [
+      {
+       "id": "v8xptxh6",
+       "rank": "R",
+       "title": "SUBPAGEs",
+       "isTitleHidden": false,
+       "kind": "resourceCollection",
+       "filter": {
+        "type": "filter",
+        "filterType": "field",
+        "id": "subpages",
+        "field": "parentId",
+        "operator": "equals",
+        "value": "$self"
+       }
+      },
+      {
+       "id": "rjjhhlxo",
+       "rank": "V",
+       "title": "Backlinks",
+       "isTitleHidden": false,
+       "kind": "resourceCollection",
+       "filter": {
+        "type": "filter",
+        "filterType": "field",
+        "id": "backlinks",
+        "scope": "edges",
+        "field": "targetId",
+        "operator": "equals",
+        "value": "$self"
+       }
+      },
+      {
+       "id": "akqdrece",
+       "rank": "[",
+       "title": "Location",
+       "isTitleHidden": true,
+       "kind": "map"
+      },
+      {
+       "id": "qjn68h6l",
+       "rank": "\\",
+       "title": "TAGS",
+       "isTitleHidden": false,
+       "kind": "unsupported"
+      },
+      {
+       "id": "rpgqn9nd",
+       "rank": "Y",
+       "title": "Location name and proper name and variants",
+       "isTitleHidden": true,
+       "kind": "unsupported"
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "Overview"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Overview text]"
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "History"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[History text]"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  },
+  {
+   "name": "DM",
+   "type": "page",
+   "blocks": []
+  }
+ ]
+}

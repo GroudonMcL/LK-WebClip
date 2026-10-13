@@ -1,0 +1,1812 @@
+{
+ "id": "pc66porv",
+ "name": "Class Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:16:37.977Z",
+ "tags": [
+  "Class"
+ ],
+ "properties": [
+  {
+   "id": "qn9jeqqa",
+   "rank": "O",
+   "title": "TAGS",
+   "isTitleHidden": false,
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "width": 19,
+     "rows": [
+      {
+       "id": "a8pxzopi",
+       "rank": "T",
+       "title": "TEXT",
+       "isTitleHidden": true,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "heading",
+         "level": 2,
+         "content": [
+          {
+           "text": "Core ["
+          },
+          {
+           "text": "Class] ",
+           "italic": true
+          },
+          {
+           "text": "Traits"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "kaqrp54c",
+       "rank": "\\",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Primary Ability",
+         "content": [],
+         "text": "",
+         "id": "whhygq5n",
+         "rank": "R"
+        },
+        {
+         "key": "Hit Point Die",
+         "content": [],
+         "text": "",
+         "id": "i51apa77",
+         "rank": "S"
+        },
+        {
+         "key": "Saving Throw Proficiencies",
+         "content": [],
+         "text": "",
+         "id": "xokyid1k",
+         "rank": "W"
+        },
+        {
+         "key": "Skill Proficiencies",
+         "content": [],
+         "text": "",
+         "id": "sqbmv1b4",
+         "rank": "X"
+        },
+        {
+         "key": "Weapon Proficiencies",
+         "content": [],
+         "text": "",
+         "id": "f0mde2tr",
+         "rank": "["
+        },
+        {
+         "key": "Armour Training",
+         "content": [],
+         "text": "",
+         "id": "aa41bltu",
+         "rank": "_"
+        },
+        {
+         "key": "Starting Equipment",
+         "content": [],
+         "text": "",
+         "id": "xuxsmhnm",
+         "rank": "b"
+        }
+       ],
+       "display": "inline"
+      }
+     ]
+    },
+    {
+     "kind": "infobox",
+     "layout": "wrapRight",
+     "width": 28,
+     "rows": [
+      {
+       "id": "mhisdaw1",
+       "rank": "Q",
+       "title": "Subclasses",
+       "isTitleHidden": true,
+       "kind": "resourceCollection",
+       "filter": {
+        "type": "filter",
+        "filterType": "tag",
+        "id": "tags",
+        "operator": "has_all",
+        "tags": []
+       }
+      },
+      {
+       "id": "zyj76dhs",
+       "rank": "T",
+       "title": "TEXT",
+       "isTitleHidden": true,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": [
+          {
+           "text": "(For the above Tag Index tag the [Class] name and the Subclass tag, then remove this text box)"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "shsodl6o",
+       "rank": "N",
+       "title": "TEXT",
+       "isTitleHidden": true,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "heading",
+         "level": 2,
+         "content": [
+          {
+           "text": "Subclasses"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 1,
+     "content": [
+      {
+       "text": "Class Details"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "text"
+      }
+     ]
+    },
+    {
+     "kind": "rule"
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "Becoming a ["
+      },
+      {
+       "text": "Class",
+       "italic": true
+      },
+      {
+       "text": "]"
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 3,
+     "content": [
+      {
+       "text": "As a Level 1 Character"
+      }
+     ]
+    },
+    {
+     "kind": "bulletList",
+     "children": [
+      {
+       "kind": "listItem",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": [
+          {
+           "text": " "
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "kind": "listItem",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 3,
+     "content": [
+      {
+       "text": "As a Multiclass Character"
+      }
+     ]
+    },
+    {
+     "kind": "bulletList",
+     "children": [
+      {
+       "kind": "listItem",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": [
+          {
+           "text": " "
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "kind": "listItem",
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "width": 60,
+     "rows": [
+      {
+       "id": "sqoyb8bi",
+       "rank": "X",
+       "title": "Class Features Table",
+       "isTitleHidden": false,
+       "kind": "textField",
+       "children": [
+        {
+         "kind": "table",
+         "children": [
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Level",
+                 "bold": true
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Proficiency Bonus",
+                 "bold": true
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Class Features",
+                 "bold": true
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Feature 1",
+                 "bold": true
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Feature 2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "header": true,
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Feature 3"
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "1"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "3"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "[Class] ",
+                 "italic": true
+                },
+                {
+                 "text": "Subclass"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "4"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+2"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Ability Score Improvement"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "5"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+3"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "6"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+3"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Subclass feature"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "7"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+3"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "8"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+3"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Ability Score Improvement"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "9"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+4"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "10"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+4"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Subclass feature"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "11"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+4"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "12"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+4"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Ability Score Improvement"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "13"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+5"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "14"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+5"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Subclass feature"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "15"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+5"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "16"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+5"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Ability Score Improvement"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "17"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+6"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "18"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+6"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "19"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+6"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "Epic Boon"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "kind": "tableRow",
+           "children": [
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "20"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": [
+                {
+                 "text": "+6"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            },
+            {
+             "kind": "tableCell",
+             "children": [
+              {
+               "kind": "paragraph",
+               "content": []
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "[Class] ",
+       "italic": true
+      },
+      {
+       "text": "Class Features"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "As a [Class], you gain the following class features when you reach the specified [Class] levels. These features are listed in the [Class] Features table."
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "..."
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  }
+ ]
+}

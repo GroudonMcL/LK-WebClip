@@ -1,0 +1,170 @@
+{
+ "id": "ukbee95z",
+ "name": "Magic Item Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-11T19:04:17.778Z",
+ "tags": [
+  "Magic Item"
+ ],
+ "properties": [
+  {
+   "id": "jis3vbkx",
+   "rank": "O",
+   "title": "TAGS",
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "layout",
+     "children": [
+      {
+       "kind": "layoutColumn",
+       "width": 25,
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      },
+      {
+       "kind": "layoutColumn",
+       "width": 50,
+       "children": [
+        {
+         "kind": "infobox",
+         "rows": [
+          {
+           "id": "xws19vs6",
+           "rank": "S",
+           "title": "TEXT",
+           "isTitleHidden": true,
+           "kind": "textField",
+           "children": [
+            {
+             "kind": "heading",
+             "level": 2,
+             "content": [
+              {
+               "text": "[Magic Item]",
+               "italic": true
+              },
+              {
+               "text": " Name"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "id": "p4bk8may",
+           "rank": "Y",
+           "title": "PROPERTIES",
+           "isTitleHidden": true,
+           "kind": "keyValue",
+           "rows": [
+            {
+             "key": "Type:",
+             "content": [],
+             "text": "",
+             "id": "yt7lrn1p",
+             "rank": "S"
+            },
+            {
+             "key": "Rarity:",
+             "content": [],
+             "text": "",
+             "id": "hss8ybpg",
+             "rank": "X"
+            },
+            {
+             "key": "Attunement:",
+             "content": [],
+             "text": "",
+             "id": "ddmd26k7",
+             "rank": "Z"
+            }
+           ]
+          },
+          {
+           "id": "rzax5s27",
+           "rank": "[",
+           "title": "Text",
+           "isTitleHidden": true,
+           "kind": "textField",
+           "children": [
+            {
+             "kind": "paragraph",
+             "content": [
+              {
+               "text": "Description text",
+               "italic": true
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "id": "pis7xg75",
+           "rank": "`",
+           "title": "TAGS",
+           "isTitleHidden": true,
+           "kind": "unsupported"
+          },
+          {
+           "id": "cq6pcmdn",
+           "rank": "e",
+           "title": "PROPERTIES",
+           "isTitleHidden": true,
+           "kind": "keyValue",
+           "rows": [
+            {
+             "key": "Source:",
+             "content": [],
+             "text": "",
+             "id": "svrpmqht",
+             "rank": "O"
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "kind": "layoutColumn",
+       "width": 25,
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  }
+ ]
+}

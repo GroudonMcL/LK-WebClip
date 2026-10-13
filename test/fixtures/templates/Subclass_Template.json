@@ -1,0 +1,83 @@
+{
+ "id": "arrdt8po",
+ "name": "Subclass Template",
+ "parentId": "pc66porv",
+ "updatedAt": "2026-10-13T13:16:25.048Z",
+ "tags": [
+  "Subclass"
+ ],
+ "properties": [
+  {
+   "id": "d7wi6jqu",
+   "rank": "P",
+   "title": "TAGS",
+   "isTitleHidden": false,
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "textField",
+     "title": "Descriptive Text",
+     "isTitleHidden": true,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[Descriptive Text]",
+         "italic": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Class description"
+      }
+     ]
+    },
+    {
+     "kind": "heading",
+     "level": 2,
+     "content": [
+      {
+       "text": "Level [?]: [Feature Name]"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "[Class Feature Text]"
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": [
+      {
+       "text": "..."
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  }
+ ]
+}

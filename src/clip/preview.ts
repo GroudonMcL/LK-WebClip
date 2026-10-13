@@ -41,9 +41,34 @@ function blockHtml(block: Block, nameOf: (id: string) => string | undefined): st
       return `<figure class="lk-image"><img src="${escapeAttr(block.url)}" alt="${escapeAttr(block.alt ?? '')}" loading="lazy">${block.alt ? `<figcaption>${escapeHtml(block.alt)}</figcaption>` : ''}</figure>`
     case 'resourceCollection':
       return `<div class="lk-collection">${escapeHtml(block.title ?? 'Collection')}</div>`
+    case 'infobox': {
+      const rows = (block.rows as unknown as Block[]).map((row) => blockHtml(row, nameOf)).join('')
+      const side = block.layout === 'wrapLeft' ? ' left' : block.layout === 'wrapRight' || !block.layout ? ' right' : ''
+      return `<aside class="lk-infobox${side}">${rows}</aside>`
+    }
+    case 'keyValue': {
+      const rows = block.rows.map((row) => `<tr><th>${escapeHtml(row.key)}</th><td>${runsHtml(row.content as Run[] | undefined, nameOf) || escapeHtml(row.text ?? '')}</td></tr>`).join('')
+      return `<div class="lk-field">${titleHtml(block)}<table class="lk-kv">${rows}</table></div>`
+    }
+    case 'textField':
+      return `<div class="lk-field">${titleHtml(block)}${children()}</div>`
+    case 'layout':
+      return `<div class="lk-layout">${children()}</div>`
+    case 'layoutColumn':
+      return `<div class="lk-column">${children()}</div>`
+    case 'secret':
+      return `<div class="lk-secret">${children()}</div>`
+    case 'callout':
+      return `<div class="lk-callout">${children()}</div>`
+    case 'unsupported':
+      return `<div class="lk-other">${escapeHtml((block as { title?: string }).title ?? 'LegendKeeper field')}</div>`
     default:
       return `<div class="lk-other">[${escapeHtml(block.kind)}]</div>`
   }
+}
+
+function titleHtml(block: { title?: string; isTitleHidden?: boolean }): string {
+  return block.title && !block.isTitleHidden ? `<div class="lk-field-title">${escapeHtml(block.title)}</div>` : ''
 }
 
 function runsHtml(runs: Run[] | undefined, nameOf: (id: string) => string | undefined): string {

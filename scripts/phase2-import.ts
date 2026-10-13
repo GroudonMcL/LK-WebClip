@@ -60,7 +60,7 @@ async function clip(title: string, capture: Capture, destination: 'new' | { appe
       onProgress: (message) => console.log(`  … ${message}`),
     })
     const written = await lk.documents.getBlocks({ resourceId: result.resourceId, documentId: result.documentId })
-    console.log(`  ✔ ${index.path(result.resourceId)} — ${written.blocks.length} top-level blocks, source "${result.source.name}"${source.created ? ' (new)' : ''}, ${result.imagesUploaded} image(s) uploaded`)
+    console.log(`  ✔ ${index.path(result.resourceId)} — ${written.blocks.length} top-level blocks, source "${result.source?.name}"${source.created ? ' (new)' : ''}, ${result.imagesUploaded} image(s) uploaded`)
     for (const failed of result.imagesFailed) console.log(`  image fallback: ${failed.src.slice(0, 80)} — ${failed.reason}`)
     console.log(`  ${result.url}\n`)
   } catch (error) {
@@ -92,7 +92,9 @@ await clip('Stat block selection (fixture) → new page', capture('selection', s
 // 2. A full Wikipedia article through Readability, as a new page.
 const wikiHtml = await (await fetch(WIKI_URL, { headers: { 'User-Agent': 'LK-WebClip/0.2 (https://github.com/GroudonMcL/LK-WebClip)' } })).text()
 const { document: wikiDoc } = parseHTML(wikiHtml)
-const article = new Readability(parseHTML(wikiHtml).document as unknown as Document).parse()
+const readable = parseHTML(wikiHtml).document
+for (const furniture of Array.from(readable.querySelectorAll('.mw-editsection'))) furniture.remove()
+const article = new Readability(readable as unknown as Document).parse()
 if (!article?.content) throw new Error('Readability found no article')
 await clip('Wikipedia article (Readability) → new page', capture('article', article.content, WIKI_URL, wikiDoc as unknown as Document, `${article.title ?? 'Tiamat'} (article clip)`), 'new')
 

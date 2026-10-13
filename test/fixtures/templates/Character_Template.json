@@ -1,0 +1,206 @@
+{
+ "id": "iiksmvlv",
+ "name": "Character Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-11T19:04:25.246Z",
+ "tags": [
+  "NPC",
+  "Entity"
+ ],
+ "properties": [
+  {
+   "id": "mcpxwdyg",
+   "rank": "Q",
+   "title": "TAGS",
+   "isTitleHidden": false,
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "infobox",
+     "layout": "wrapLeft",
+     "width": 19,
+     "rows": [
+      {
+       "id": "rht79imm",
+       "rank": "P",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Species",
+         "content": [],
+         "text": "",
+         "id": "rwdwsnht",
+         "rank": "S"
+        },
+        {
+         "key": "Gender",
+         "content": [],
+         "text": "",
+         "id": "z13evlfe",
+         "rank": "X"
+        },
+        {
+         "key": "Age",
+         "content": [],
+         "text": "",
+         "id": "fhbrta6g",
+         "rank": "["
+        }
+       ],
+       "display": "list"
+      },
+      {
+       "id": "pkvnjq4p",
+       "rank": "U",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Titles",
+         "content": [],
+         "text": "",
+         "id": "td137xa8",
+         "rank": "R"
+        },
+        {
+         "key": "Professions",
+         "content": [],
+         "text": "",
+         "id": "y4tc41sb",
+         "rank": "W"
+        }
+       ]
+      },
+      {
+       "id": "sdrppliz",
+       "rank": "X",
+       "title": "Associated Characters",
+       "isTitleHidden": false,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Friends",
+         "content": [],
+         "text": "",
+         "id": "vp71thcp",
+         "rank": "S"
+        },
+        {
+         "key": "Enemies",
+         "content": [],
+         "text": "",
+         "id": "g0o2xm11",
+         "rank": "X"
+        }
+       ]
+      },
+      {
+       "id": "lrtq3kdz",
+       "rank": "Q",
+       "title": "PROPERTIES",
+       "isTitleHidden": true,
+       "kind": "keyValue",
+       "rows": [
+        {
+         "key": "Class",
+         "content": [],
+         "text": "",
+         "id": "jnlxyrzf",
+         "rank": "Q"
+        }
+       ]
+      },
+      {
+       "id": "aun1mxkd",
+       "rank": "W",
+       "title": "ALIASES",
+       "isTitleHidden": false,
+       "kind": "unsupported"
+      },
+      {
+       "id": "wm78veqx",
+       "rank": "\\",
+       "title": "TAGS",
+       "isTitleHidden": false,
+       "kind": "unsupported"
+      }
+     ]
+    },
+    {
+     "kind": "quote",
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": [
+        {
+         "text": "[\"Quote\"] - [Source]",
+         "italic": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "DESCRIPTION",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Background",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "textField",
+     "title": "Notes",
+     "isTitleHidden": false,
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "secret",
+     "children": [
+      {
+       "kind": "paragraph",
+       "content": []
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  },
+  {
+   "name": "DM",
+   "type": "page",
+   "blocks": []
+  }
+ ]
+}

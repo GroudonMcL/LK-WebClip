@@ -1,9 +1,12 @@
 import type { LegendKeeper } from '@legendkeeper/sdk'
 import type { Block } from '@legendkeeper/sdk/blocks'
 import { ensureAssetFolder, importImage } from '../lk/images.js'
+import { appendTree, appendedTemplate, compose, imageUrls, mapImages, type Composition } from '../fill/compose.js'
+import type { FillPlan } from '../fill/plan.js'
 import { appendToDocument, appendedClip, createPage, newPageClip, type DocumentRef } from '../lk/pages.js'
 import type { IndexedResource, ProjectIndex } from '../lk/projectIndex.js'
-import { createSource, type SourceConfig } from '../lk/sources.js'
+import { createSource, sourceHeading, type SourceConfig } from '../lk/sources.js'
+import { createFromTemplate, fillPage, TemplateFillError, type TemplateContent } from '../lk/templates.js'
 import { htmlStringToBlocks, mapBlocks, visit, type ClipImage } from './htmlToBlocks.js'
 import { linkClip, type LinkOptions, type LinkTerm } from './links.js'
 
@@ -58,9 +61,19 @@ export type Destination =
 
 export type SourceSpec = { kind: 'existing'; resourceId: string } | { kind: 'new'; name: string }
 
+/** A template to fill: the plan is made on the full template for a new page, or on appendTree() for an append. */
+export interface TemplateImport {
+  content: TemplateContent
+  plan: FillPlan
+  /** Keep the template's placeholders in slots nothing was found for; otherwise remove those slots. */
+  keepUnfilled: boolean
+}
+
 export interface ImportOptions {
   destination: Destination
-  source: SourceSpec
+  /** The Source to credit with a "From <Source>" heading; undefined leaves the credit out. */
+  source?: SourceSpec
+  template?: TemplateImport
   sourceConfig: SourceConfig
   /** The asset-library folder clipped images go into. */
   assetFolderName?: string
@@ -71,8 +84,10 @@ export interface ImportOptions {
 export interface ImportResult {
   resourceId: string
   documentId: string
-  source: IndexedResource
+  source?: IndexedResource
   sourceCreated: boolean
+  /** Template slots the new page didn't have (the template changed while the clip was open). */
+  templateMissing: string[]
   imagesUploaded: number
   imagesFailed: { src: string; reason: string }[]
   /** Opens the page in the LegendKeeper app. */
@@ -88,25 +103,35 @@ export async function importClip(lk: LegendKeeper, index: ProjectIndex, plan: Cl
   const project = await lk.project()
 
   // 1. The Source, so the heading can mention it.
-  let source: IndexedResource
+  let source: IndexedResource | undefined
   let sourceCreated = false
-  if (options.source.kind === 'existing') {
+  if (options.source?.kind === 'existing') {
     const found = index.get(options.source.resourceId)
     if (!found) throw new Error('The chosen Source is no longer in the project. Refresh and pick it again.')
     source = found
-  } else {
+  } else if (options.source?.kind === 'new') {
     progress(`Creating the Source "${options.source.name}"…`)
     source = await createSource(lk, index, options.source.name, options.sourceConfig)
     sourceCreated = true
   }
 
+  // With a template, only the images that end up in the page are uploaded.
+  const template = options.template
+  const templateTree = template ? (options.destination.mode === 'new' ? template.content.tree : appendTree(template.content.tree)) : undefined
+  let composition: Composition | undefined
+  if (template && templateTree) {
+    composition = compose(templateTree, template.plan, { sourceHeading: source ? sourceHeading(source.id) : undefined, keepUnfilled: template.keepUnfilled })
+  }
+  const wanted = composition ? imageUrls(composition) : undefined
+  const images = wanted ? plan.images.filter((image) => wanted.has(image.src)) : plan.images
+
   // 2. Images: upload each one once, then point the blocks at the uploaded copies.
   const uploaded = new Map<string, Block>()
   const imagesFailed: { src: string; reason: string }[] = []
-  if (plan.images.length > 0) {
+  if (images.length > 0) {
     const folderId = await ensureAssetFolder(lk, options.assetFolderName ?? 'LK Web Clipper')
-    for (const [i, image] of plan.images.entries()) {
-      progress(`Uploading image ${i + 1} of ${plan.images.length}…`)
+    for (const [i, image] of images.entries()) {
+      progress(`Uploading image ${i + 1} of ${images.length}…`)
       const name = image.alt || imageName(image.src)
       const result = await importImage(lk, image.src, { name, alt: image.alt || undefined, folderId, fetchImpl: options.fetchImpl })
       if (!result.ok) imagesFailed.push({ src: image.src, reason: result.reason })
@@ -117,14 +142,32 @@ export async function importClip(lk: LegendKeeper, index: ProjectIndex, plan: Cl
 
   // 3. Write.
   let ref: DocumentRef
-  if (options.destination.mode === 'new') {
+  let templateMissing: string[] = []
+  if (composition && templateTree && template) {
+    composition = mapImages(composition, (url) => uploaded.get(url))
+    if (options.destination.mode === 'new') {
+      progress(`Creating the page from ${template.content.name}…`)
+      const created = await createFromTemplate(lk, index, { templateId: template.content.id, name: options.destination.title, parentId: options.destination.parentId })
+      progress('Filling in the template…')
+      try {
+        templateMissing = (await fillPage(lk, created.id, composition)).missing
+      } catch (error) {
+        throw Object.assign(new TemplateFillError(created, error), { composition, url: appUrl(project.id, created.id) })
+      }
+      ref = { resourceId: created.id, documentId: created.documents.find((d) => d.type === 'page' && d.name.toLowerCase() === 'main')?.id ?? created.documents[0]!.id }
+    } else {
+      progress('Adding the template to the page…')
+      ref = options.destination.target
+      await appendToDocument(lk, ref, appendedTemplate(templateTree, composition))
+    }
+  } else if (options.destination.mode === 'new') {
     progress('Creating the page…')
-    const created = await createPage(lk, index, { parentId: options.destination.parentId, name: options.destination.title, blocks: newPageClip(source.id, content) })
+    const created = await createPage(lk, index, { parentId: options.destination.parentId, name: options.destination.title, blocks: newPageClip(source?.id, content) })
     ref = created.document
   } else {
     progress('Appending to the page…')
     ref = options.destination.target
-    await appendToDocument(lk, ref, appendedClip(source.id, content))
+    await appendToDocument(lk, ref, appendedClip(source?.id, content))
   }
 
   return {
@@ -132,7 +175,8 @@ export async function importClip(lk: LegendKeeper, index: ProjectIndex, plan: Cl
     documentId: ref.documentId,
     source,
     sourceCreated,
-    imagesUploaded: plan.images.length - imagesFailed.length,
+    templateMissing,
+    imagesUploaded: images.length - imagesFailed.length,
     imagesFailed,
     url: appUrl(project.id, ref.resourceId),
   }

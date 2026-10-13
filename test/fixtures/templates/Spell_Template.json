@@ -1,0 +1,164 @@
+{
+ "id": "u77pa3i6",
+ "name": "Spell Template",
+ "parentId": "templates",
+ "updatedAt": "2026-10-13T13:16:54.399Z",
+ "tags": [
+  "Spell"
+ ],
+ "properties": [
+  {
+   "id": "opduyyt8",
+   "rank": "O",
+   "title": "TAGS",
+   "kind": "unsupported"
+  }
+ ],
+ "docs": [
+  {
+   "name": "Main",
+   "type": "page",
+   "blocks": [
+    {
+     "kind": "layout",
+     "children": [
+      {
+       "kind": "layoutColumn",
+       "width": 25,
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      },
+      {
+       "kind": "layoutColumn",
+       "width": 50,
+       "children": [
+        {
+         "kind": "infobox",
+         "rows": [
+          {
+           "id": "o8g8g7q9",
+           "rank": "R",
+           "title": "Spell Name",
+           "isTitleHidden": true,
+           "kind": "keyValue",
+           "rows": [
+            {
+             "key": "Casting Time",
+             "content": [],
+             "text": "",
+             "id": "fd14hghl",
+             "rank": "0|aaaaaa:"
+            },
+            {
+             "key": "Range/Area",
+             "content": [],
+             "text": "",
+             "id": "htjd5zml",
+             "rank": "0|aaaaaa>"
+            },
+            {
+             "key": "Components",
+             "content": [],
+             "text": "",
+             "id": "e8bw3p44",
+             "rank": "0|aaaaaa?"
+            },
+            {
+             "key": "Duration",
+             "content": [],
+             "text": "",
+             "id": "kdocq4fi",
+             "rank": "0|aaaaaa@"
+            },
+            {
+             "key": "Level",
+             "content": [],
+             "text": "",
+             "id": "j54s1a86",
+             "rank": "0|aaaaaa6"
+            },
+            {
+             "key": "School",
+             "content": [],
+             "text": "",
+             "id": "wlzk8ofb",
+             "rank": "0|aaaaaa8"
+            }
+           ],
+           "display": "inline"
+          },
+          {
+           "id": "rmyrbm13",
+           "rank": "T",
+           "title": "Description",
+           "isTitleHidden": true,
+           "kind": "textField",
+           "children": [
+            {
+             "kind": "paragraph",
+             "content": [
+              {
+               "text": "Description text",
+               "italic": true
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "id": "o39ffkny",
+           "rank": "U",
+           "title": "TAGS",
+           "isTitleHidden": true,
+           "kind": "unsupported"
+          },
+          {
+           "id": "xtk2o1bo",
+           "rank": "O",
+           "title": "Spell Name",
+           "isTitleHidden": true,
+           "kind": "textField",
+           "children": [
+            {
+             "kind": "heading",
+             "level": 2,
+             "content": [
+              {
+               "text": "[Spell]",
+               "italic": true
+              },
+              {
+               "text": " Name"
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "kind": "layoutColumn",
+       "width": 25,
+       "children": [
+        {
+         "kind": "paragraph",
+         "content": []
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "paragraph",
+     "content": []
+    }
+   ]
+  }
+ ]
+}
