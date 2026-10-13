@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <title>Adult Red Dragon - Monsters - Example Compendium</title>
+  <meta property="og:site_name" content="Example Compendium">
+</head>
+<body>
+<nav><a href="/">Home</a> › <a href="/monsters">Monsters</a></nav>
+<div class="mon-stat-block" id="clip">
+  <div class="mon-stat-block__header">
+    <h1 class="mon-stat-block__name"><a href="/monsters/adult-red-dragon">Adult Red Dragon</a></h1>
+    <div class="mon-stat-block__meta">Huge Dragon, Typically <span style="font-style: italic">Chaotic Evil</span></div>
+  </div>
+  <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dc/Flag_of_Wales.svg/330px-Flag_of_Wales.svg.png" alt="Red dragon artwork">
+  <div class="mon-stat-block__attributes">
+    <div><span class="label"><strong>Armor Class</strong></span> 19 (Natural Armor)</div>
+    <div><span class="label"><strong>Hit Points</strong></span> 256 (19d12 + 133)</div>
+    <div><span class="label"><strong>Speed</strong></span> 40 ft., climb 40 ft., fly 80 ft.</div>
+  </div>
+  <table class="ability-scores">
+    <thead><tr><th>STR</th><th>DEX</th><th>CON</th><th>INT</th><th>WIS</th><th>CHA</th></tr></thead>
+    <tbody><tr><td>27 (+8)</td><td>10 (+0)</td><td>25 (+7)</td><td>16 (+3)</td><td>13 (+1)</td><td>21 (+5)</td></tr></tbody>
+  </table>
+  <h2>Traits</h2>
+  <p><em><strong>Legendary Resistance (3/Day).</strong></em> If the dragon fails a saving throw, it can choose to succeed instead.</p>
+  <h2>Actions</h2>
+  <p><em><strong>Multiattack.</strong></em> The dragon can use its <a href="/glossary/frightful-presence">Frightful Presence</a>. It then makes three attacks:</p>
+  <ul>
+    <li>one with its <b>bite</b> and</li>
+    <li>two with its claws.
+      <ul><li>Each claw: <code>+14 to hit</code>, reach 10 ft.</li></ul>
+    </li>
+  </ul>
+  <p><em><strong>Fire Breath (Recharge 5–6).</strong></em> The dragon exhales fire in a 60-foot cone. Each creature in that area must make a DC 21 <a href="/glossary/dexterity">Dexterity</a> saving throw, taking 63 (18d6) fire damage on a failed save.</p>
+  <h3>Lair</h3>
+  <p>Red dragons lair in the Hellfurnaces of <a href="https://greyhawkonline.com/greyhawkwiki/Greyhawk">Greyhawk</a>, and some serve <a href="/gods/tiamat">Tiamat</a>.
+    Sages say a <a href="/npcs/natasha">Natasha the Dark</a> once bargained with one.</p>
+  <table>
+    <caption>Lair actions by initiative</caption>
+    <tr><th>Initiative</th><th>Effect</th></tr>
+    <tr><td>20</td><td>Magma erupts<table><tr><td>radius</td><td>20 ft.</td></tr></table></td></tr>
+    <tr><td colspan="2">Each effect lasts until initiative count 20 of the next round.</td></tr>
+  </table>
+  <blockquote>“The dragon’s hoard is its <s>pride</s> <u>heart</u>.”<br>— Volo</blockquote>
+  <pre><code class="language-text">dragon.breathe({ cone: 60, damage: '18d6' })</code></pre>
+  <dl><dt>Challenge</dt><dd>17 (18,000 XP)</dd></dl>
+  <p>Damage formula: 18d6 = 63 avg; H<sub>2</sub>O and x<sup>2</sup>. <a href="javascript:void(0)">Roll</a></p>
+  <img src="/pixel.gif" width="1" height="1">
+  <script>trackView()</script>
+</div>
+</body>
+</html>

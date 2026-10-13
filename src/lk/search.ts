@@ -30,7 +30,7 @@ export function rankLocal(index: ProjectIndex, query: string, limit = 25): Searc
   const wordStart = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(q)}`, 'u')
   const hits: SearchHit[] = []
 
-  for (const resource of index.byId.values()) {
+  for (const resource of index.pages()) {
     const name = normalizeName(resource.name)
     let tier: MatchTier | undefined
     let matched: string | undefined
@@ -70,7 +70,7 @@ export async function searchResources(lk: LegendKeeper, index: ProjectIndex, que
   for (const hit of remote.data) {
     if (seen.has(hit.resource.id)) continue
     const resource = index.get(hit.resource.id)
-    if (!resource) continue // Not in the index yet: the caller should refresh it.
+    if (!resource || index.isTemplate(resource.id)) continue // Missing: the caller should refresh the index.
     seen.add(resource.id)
     const passage = hit.document?.highlights?.[0]?.segment
     content.push({ resource, path: index.path(resource.id), tier: MatchTier.Content, matched: passage })

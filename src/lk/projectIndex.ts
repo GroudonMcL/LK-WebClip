@@ -21,6 +21,8 @@ export interface IndexedResource {
   documents: IndexedDocument[]
 }
 
+export const TEMPLATES_ROOT = 'templates'
+
 /** Document types the clipper can write blocks into. A blank document becomes a page on its first block write. */
 export const WRITABLE_DOCUMENT_TYPES = new Set(['page', 'blank'])
 
@@ -109,6 +111,26 @@ export class ProjectIndex {
     return [...this.ancestors(id), self].map((resource) => resource.name).join(' / ')
   }
 
+  /**
+   * Templates come back from resources.list alongside ordinary pages. They sit under the virtual
+   * root "templates", which is not itself a resource, and are never clip destinations or link targets.
+   */
+  isTemplate(id: string): boolean {
+    const seen = new Set<string>()
+    let parentId = this.byId.get(id)?.parentId ?? null
+    while (parentId !== null && !seen.has(parentId)) {
+      if (parentId === TEMPLATES_ROOT) return true
+      seen.add(parentId)
+      parentId = this.byId.get(parentId)?.parentId ?? null
+    }
+    return false
+  }
+
+  /** Every resource except templates. */
+  pages(): IndexedResource[] {
+    return [...this.byId.values()].filter((resource) => !this.isTemplate(resource.id))
+  }
+
   isDescendantOf(id: string, ancestorId: string): boolean {
     return this.ancestors(id).some((resource) => resource.id === ancestorId)
   }
@@ -116,7 +138,7 @@ export class ProjectIndex {
   /** Resources whose name or alias equals the given text, ignoring case and surrounding space. */
   findByName(name: string, { aliases = true } = {}): IndexedResource[] {
     const wanted = normalizeName(name)
-    return [...this.byId.values()].filter(
+    return this.pages().filter(
       (resource) =>
         normalizeName(resource.name) === wanted || (aliases && resource.aliases.some((alias) => normalizeName(alias) === wanted)),
     )
