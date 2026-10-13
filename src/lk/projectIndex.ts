@@ -38,9 +38,12 @@ export class ProjectIndex {
   readonly byId = new Map<string, IndexedResource>()
   loadedAt: Date | null = null
   pagesFetched = 0
+  /** Changes whenever a resource is added or replaced, so derived data (such as the link matcher) can be cached. */
+  version = 0
+  private pagesCache: IndexedResource[] | undefined
 
   constructor(resources: Iterable<IndexedResource> = []) {
-    for (const resource of resources) this.byId.set(resource.id, resource)
+    for (const resource of resources) this.upsert(resource)
   }
 
   static fromListItem(item: ResourceListItem): IndexedResource {
@@ -81,6 +84,8 @@ export class ProjectIndex {
   /** Adds or replaces one resource, such as one the clipper just created, without reloading everything. */
   upsert(resource: IndexedResource): void {
     this.byId.set(resource.id, resource)
+    this.version++
+    this.pagesCache = undefined
   }
 
   children(parentId: string | null): IndexedResource[] {
@@ -128,7 +133,8 @@ export class ProjectIndex {
 
   /** Every resource except templates. */
   pages(): IndexedResource[] {
-    return [...this.byId.values()].filter((resource) => !this.isTemplate(resource.id))
+    this.pagesCache ??= [...this.byId.values()].filter((resource) => !this.isTemplate(resource.id))
+    return this.pagesCache
   }
 
   isDescendantOf(id: string, ancestorId: string): boolean {

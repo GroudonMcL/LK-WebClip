@@ -13,6 +13,7 @@ import { p, plainText, walk } from '@legendkeeper/sdk/blocks'
 import { Readability } from '@mozilla/readability'
 import { DOMParser, parseHTML } from 'linkedom'
 import { importClip, prepareClip, type Capture } from '../src/clip/importClip.js'
+import { DEFAULT_LINK_OPTIONS } from '../src/clip/links.js'
 import { ProjectIndex, configuredKeys, createPage, describeError, findOrCreateSource, siteName, type SourceConfig } from '../src/index.js'
 
 const SANDBOX_NAME = process.env.LK_SANDBOX_NAME?.trim() || 'LK Web Clipper Sandbox'
@@ -38,12 +39,14 @@ let failures = 0
 async function clip(title: string, capture: Capture, destination: 'new' | { appendTo: string }): Promise<void> {
   console.log(`▶ ${title}`)
   try {
-    const plan = prepareClip(capture, index, { linkify: true, images: true, parser })
+    const plan = prepareClip(capture, index, { links: DEFAULT_LINK_OPTIONS, images: true, parser })
     const kinds = new Map<string, number>()
     walk(plan.blocks, (block) => kinds.set(block.kind, (kinds.get(block.kind) ?? 0) + 1))
     console.log(`  converted: ${[...kinds].map(([k, n]) => `${k} ${n}`).join(', ')}`)
-    console.log(`  links → pages: ${plan.converted.map((c) => `${c.text} → ${index.path(c.resource.id)}`).join('; ') || 'none'}`)
-    if (plan.ambiguous.length) console.log(`  ambiguous, kept as links: ${plan.ambiguous.map((a) => `${a.text} (${a.candidates.length} pages)`).join('; ')}`)
+    const linked = plan.terms.filter((t) => t.linkedTo)
+    console.log(`  links → pages: ${linked.map((t) => `${t.pass === 'text' ? '' : '[link] '}${t.text} → ${index.path(t.linkedTo!)}${t.found > 1 ? ` (${t.linked} of ${t.found})` : ''}`).join('; ') || 'none'}`)
+    const ambiguous = plan.terms.filter((t) => t.status === 'ambiguous')
+    if (ambiguous.length) console.log(`  ambiguous, left unlinked: ${ambiguous.map((t) => `${t.text} (${t.candidates.map((c) => c.name).join(' / ')})`).join('; ')}`)
     for (const warning of plan.warnings) console.log(`  warning: ${warning}`)
 
     const name = siteName({ url: capture.url, ...capture.meta })

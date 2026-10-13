@@ -35,7 +35,7 @@ const sandbox = index.children(null).find((r) => r.name === SANDBOX_NAME)
 const sandboxSources = sandbox && index.children(sandbox.id).find((r) => r.name === 'Sources')
 if (!sandbox || !sandboxSources) throw new Error('Run npm run poc first: it creates the sandbox and its Sources page.')
 const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ')
-const runName = `Phase 2 E2E ${stamp}`
+const runName = `Extension E2E ${stamp}`
 const run = await createPage(lk, index, { parentId: sandbox.id, name: runName, blocks: [p(`Clips made through the Chrome extension by the automated end-to-end test on ${stamp} UTC (scripts/e2e.ts).`)] })
 console.log(`Run page: ${index.path(run.resource.id)}`)
 
@@ -115,7 +115,23 @@ try {
   check(true, 'the website Source "Example Compendium" was recognised as an existing Source')
   const summary = await panel.locator('.summary').innerText()
   console.log(`  summary: ${summary.replace(/\n+/g, ' | ')}`)
-  check(summary.includes('Natasha the Dark'), 'the summary reports a link left alone because two pages share its name')
+  // Links: choose a page for the ambiguous name, and switch one proposed link off.
+  const links = panel.locator('.links')
+  await links.getByText('Natasha the Dark').waitFor()
+  const natasha = index.findByName('Natasha').find((r) => r.name === 'Natasha')!
+  const initiative = index.findByName('Initiative')[0]
+  await links.locator('li.ambiguous', { hasText: 'Natasha the Dark' }).locator('select').selectOption(natasha.id)
+  check(await links.locator('li.ambiguous').count() === 0, 'choosing Natasha for "Natasha the Dark" resolves the ambiguity')
+  if (initiative) await links.locator('li', { hasText: 'Initiative' }).locator('input[type=checkbox]').uncheck()
+  // Reloading the page list must not reset the form.
+  await panel.locator('#refresh').click()
+  await panel.getByText(/loading pages/).waitFor({ state: 'detached', timeout: 30_000 }).catch(() => {})
+  await panel.getByText(/pages, updated just now/).waitFor({ timeout: 30_000 })
+  const kept = (await panel.getByPlaceholder('Name of the new page').inputValue()) === title && (await panel.locator('.picker-chosen', { hasText: runName }).isVisible())
+  const keptChoice = (await links.locator('li', { hasText: 'Natasha the Dark' }).locator('select').inputValue()) === natasha.id
+  check(kept && keptChoice, 'reloading the page list kept the page name, parent and link choices')
+  const linksText = await links.innerText()
+  console.log(`  links: ${linksText.replace(/\n+/g, ' | ')}`)
   await panel.screenshot({ path: `${shots}new-page-form.png`, fullPage: true })
   await panel.getByRole('button', { name: 'Create page' }).click()
   await panel.getByText('Page created').waitFor({ timeout: 60_000 })
@@ -125,6 +141,11 @@ try {
   check(page1.parentId === run.resource.id, `created "${page1.name}" under the run page`)
   check(firstHeading(page1.blocks) === 'From Example Compendium', 'it opens with "From Example Compendium"')
   check(kinds(page1.blocks).includes('bulletList') && kinds(page1.blocks).includes('table') && kinds(page1.blocks).includes('code'), `lists, tables and code arrived: ${[...new Set(kinds(page1.blocks))].join(', ')}`)
+  const mentioned = mentions(page1.blocks.slice(1)) // After the "From <Source>" heading.
+  check(mentioned.some((m) => m.resourceId === natasha.id && m.text === 'Natasha the Dark'), '"Natasha the Dark" links to the chosen page, Natasha')
+  if (initiative) check(!mentioned.some((m) => m.resourceId === initiative.id), 'the link switched off (Initiative) was left as plain text')
+  const fromText = mentioned.filter((m) => m.resourceId !== natasha.id)
+  check(fromText.length >= 2, `page names in the text became links: ${fromText.map((m) => m.text ?? index.get(m.resourceId)?.name).join(', ')}`)
 
   // 3. A right-clicked image, appended to that page with an existing Source.
   console.log('\n▶ Image → append to the new page')
@@ -132,7 +153,9 @@ try {
   await worker.evaluate(async ([src, id]) => (globalThis as any).__lkTest.captureFromMenu({ mediaType: 'image', srcUrl: src, frameId: 0 }, id), [`${site}/dragon.png`, tabId] as const)
   await panel.getByText('Image', { exact: true }).waitFor()
   await panel.getByRole('radio', { name: 'Add to a page' }).click()
-  await pick(panel, 'Search for the page to add to…', title, runName)
+  // Searched with a typo: fuzzy search still finds it.
+  await pick(panel, 'Search for the page to add to…', title, runName, 'Adult Red Dragn actions')
+  check(true, 'the page was found by searching "Adult Red Dragn actions" (a typo)')
   await panel.getByRole('radio', { name: 'A Source' }).click()
   await panel.locator('.picker-chosen button.link').last().click().catch(() => {})
   await panel.getByPlaceholder('Search your Sources…').fill('Wikipedia')
@@ -178,10 +201,10 @@ async function tabIdFor(worker: Worker, url: string): Promise<number> {
   return worker.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)!.id!, url)
 }
 
-async function pick(panel: Page, placeholder: string, name: string, underPath?: string): Promise<void> {
+async function pick(panel: Page, placeholder: string, name: string, underPath?: string, query = name): Promise<void> {
   const chosen = panel.locator('.picker', { has: panel.getByPlaceholder(placeholder) }).locator('.picker-chosen button.link')
   if (await chosen.isVisible()) await chosen.click()
-  await panel.getByPlaceholder(placeholder).fill(name)
+  await panel.getByPlaceholder(placeholder).fill(query)
   let row = panel.locator('.picker-results li', { has: panel.locator('.name', { hasText: name }) })
   // Earlier runs left pages with the same name; pick the one under this run's page.
   if (underPath) row = row.filter({ has: panel.locator('.path', { hasText: underPath }) })
@@ -213,4 +236,14 @@ function headingText(block: Block | undefined): string {
 
 function firstHeading(blocks: Block[]): string {
   return headingText(blocks[0])
+}
+
+function mentions(blocks: Block[]): { resourceId: string; text?: string }[] {
+  const out: { resourceId: string; text?: string }[] = []
+  walk(blocks, (b) => {
+    for (const r of 'content' in b && Array.isArray(b.content) ? b.content : []) {
+      if ('mention' in r && r.mention) out.push({ resourceId: r.mention.resourceId, text: r.mention.text ?? undefined })
+    }
+  })
+  return out
 }

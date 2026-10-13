@@ -16,6 +16,8 @@ export function describeError(error: unknown): string {
       return `The project owner's LegendKeeper plan does not allow API writes.${ref}`
     case 'VERSION_MISMATCH':
       return `The page changed while the clip was being saved. Nothing was overwritten; try again.${ref}`
+    case 'NOT_FOUND':
+      return `A page this clip needs no longer exists in LegendKeeper (it may have been deleted or moved to the trash). The page list is being reloaded; choose again.${ref}`
     case 'DOCUMENT_TOO_LARGE':
       return `The page is at LegendKeeper's size limit. Clip into a new page instead.${ref}`
     case 'KIND_MISMATCH':
@@ -33,4 +35,8 @@ export function describeError(error: unknown): string {
     default:
       return `${error.status} ${error.code ?? ''} ${error.message}${ref}`.replace(/\s+/g, ' ')
   }
+}
+
+export function isNotFound(error: unknown): boolean {
+  return error instanceof LegendKeeperError && error.code === 'NOT_FOUND'
 }

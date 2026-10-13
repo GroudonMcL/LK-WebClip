@@ -128,3 +128,12 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); tex
 .projects li { display: flex; justify-content: space-between; gap: 8px; }
 .toast { position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 10px 12px; border-radius: 8px; background: var(--text); color: var(--bg); }
 .toast.error { background: var(--problem); color: #fff; }
+
+.links details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
+.links summary { font-weight: 600; cursor: pointer; }
+.links ul { list-style: none; margin: 6px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.links li { padding: 2px 0; }
+.links li.off span { color: var(--muted); text-decoration: line-through; }
+.links li.ambiguous { padding: 6px 8px; border-radius: 6px; background: var(--warning-bg); }
+.links li select { margin-top: 4px; }
+.links .tier { margin-left: 4px; font-size: 11px; color: var(--muted); }

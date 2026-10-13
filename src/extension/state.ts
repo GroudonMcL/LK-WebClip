@@ -19,13 +19,19 @@ export interface ProjectSettings {
 export interface Settings {
   projects: ProjectSettings[]
   activeProjectId?: string
-  /** Turn links whose text names a page into LegendKeeper links. */
+  /** Turn web links whose text names a page into LegendKeeper links. */
   linkify: boolean
+  /** Link page names and aliases written in the text. */
+  linkText: boolean
+  /** Match names with their exact capitalisation. */
+  matchCase: boolean
+  /** Link only the first mention of each page in a clip. */
+  firstOnly: boolean
   images: boolean
   assetFolder: string
 }
 
-export const DEFAULT_SETTINGS: Settings = { projects: [], linkify: true, images: true, assetFolder: 'LK Web Clipper' }
+export const DEFAULT_SETTINGS: Settings = { projects: [], linkify: true, linkText: true, matchCase: true, firstOnly: true, images: true, assetFolder: 'LK Web Clipper' }
 
 /** The last choices for a project, so repeated clipping needs only a right-click and Import. */
 export interface Remembered {

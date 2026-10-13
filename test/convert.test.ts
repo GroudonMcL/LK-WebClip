@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DOMParser } from 'linkedom'
 import type { Block } from '@legendkeeper/sdk/blocks'
-import { blocksToHtml, htmlStringToBlocks, resolveLinks, shiftHeadings, tidyRuns, type ConvertOptions } from '../src/clip/index.js'
-import { ProjectIndex, type IndexedResource } from '../src/index.js'
+import { blocksToHtml, htmlStringToBlocks, shiftHeadings, tidyRuns, type ConvertOptions } from '../src/clip/index.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
 const base = 'https://example.com/wiki/Dragons'
@@ -204,53 +203,6 @@ describe('htmlToBlocks: images', () => {
 describe('tidyRuns', () => {
   it('merges runs with the same marks and drops empty ones', () => {
     assert.deepEqual(tidyRuns([{ text: 'a' }, { text: '' }, { text: 'b' }, { text: 'c', bold: true }]), [{ text: 'ab' }, { text: 'c', bold: true }])
-  })
-})
-
-function resource(id: string, name: string, parentId: string | null = null, aliases: string[] = []): IndexedResource {
-  return { id, name, parentId, aliases, tags: [], rank: id, isHidden: false, updatedAt: null, documents: [{ id: `${id}-d`, name: 'Main', type: 'page' }] }
-}
-
-describe('resolveLinks', () => {
-  const index = new ProjectIndex([
-    resource('gh', 'World of Greyhawk', null, ['Greyhawk']),
-    resource('rd', 'Red Dragon'),
-    resource('k1', 'King'),
-    resource('k2', 'King', 'gh'),
-    resource('tpl', 'Red Dragon Template', 'templates'),
-  ])
-
-  it('turns a link whose text names one page into a mention, keeping the label', () => {
-    const { blocks: out, converted } = resolveLinks(
-      blocks('<p>The <a href="https://x.org/Greyhawk">Greyhawk</a> sages fear the <a href="/rd"><b>Red</b> Dragon</a>.</p>'),
-      index,
-    )
-    assert.deepEqual(out, [
-      {
-        kind: 'paragraph',
-        content: [
-          { text: 'The ' }, { mention: { resourceId: 'gh', text: 'Greyhawk' } }, { text: ' sages fear the ' }, { mention: { resourceId: 'rd' } }, { text: '.' },
-        ],
-      },
-    ])
-    assert.deepEqual(converted.map((c) => c.resource.id), ['gh', 'rd'])
-  })
-
-  it('keeps the external link when the text names several pages or none', () => {
-    const { blocks: out, ambiguous, converted } = resolveLinks(blocks('<p><a href="/k">King</a> and <a href="/q">Queen</a></p>'), index)
-    assert.equal(converted.length, 0)
-    assert.deepEqual(ambiguous.map((a) => a.candidates.map((c) => c.id)), [['k1', 'k2']])
-    assert.deepEqual(out, blocks('<p><a href="/k">King</a> and <a href="/q">Queen</a></p>'))
-  })
-
-  it('never links to templates, or to excluded pages', () => {
-    assert.equal(resolveLinks(blocks('<p><a href="/t">Red Dragon Template</a></p>'), index).converted.length, 0)
-    assert.equal(resolveLinks(blocks('<p><a href="/r">Red Dragon</a></p>'), index, { exclude: new Set(['rd']) }).converted.length, 0)
-  })
-
-  it('leaves code blocks alone and works inside lists and tables', () => {
-    const out = resolveLinks(blocks('<ul><li><a href="/r">Red Dragon</a></li></ul><table><tr><td><a href="/r">Red Dragon</a></td><td>x</td></tr></table>'), index)
-    assert.equal(out.converted.length, 2)
   })
 })
 

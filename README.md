@@ -13,8 +13,8 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 | --- | --- | --- |
 | 1 | Prove the LegendKeeper API integration | **Done.** See [docs/PHASE1.md](docs/PHASE1.md) |
 | 2 | Chrome extension: context menu, side panel, capture, preview and import | **Done.** See [docs/PHASE2.md](docs/PHASE2.md) |
-| 3 | Fuzzy search, automatic links for plain text, smarter index refresh | Next |
-| 4 | Complex tables, site-specific rules, Source deduplication | |
+| 3 | Fuzzy search, linking page names in the text, ambiguity handling, keeping the page list fresh | **Done.** See [docs/PHASE3.md](docs/PHASE3.md) |
+| 4 | Complex tables, site-specific rules, Source deduplication | Next |
 | 5 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
 ## Install
@@ -33,18 +33,24 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 
 Then in the panel:
 
-- **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Search matches page names first, then aliases and tags, then page text. Each result shows where the page sits in your tree.
+- **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Search forgives typos and word order (“grayhawk”, “dragon red”). It lists page names first, then aliases, then tags, then pages whose text matches; `#tag` lists every page with that tag. Each result shows where the page sits in your tree.
 - **Source:**
   - **This website** uses the site's own name (e.g. "D&D Beyond"). If a Source with that name already exists, you choose between reusing it and creating another.
   - **A Source** picks one of your existing Sources.
   - **New Source** creates one with the name you give it.
 
   Each new Source page gets a Backlinks collection, so it lists every page that cites it.
-- **Link to my pages:** a link whose text is exactly the name or alias of one of your pages becomes a LegendKeeper link to that page. If several pages share the name, the link is left as it was and the panel tells you.
+- **Turn web links into page links:** a link whose text names one of your pages (by name or alias, including plurals like “Red Dragons” and possessives like “Greyhawk’s”) becomes a LegendKeeper link to that page.
+- **Link page names in the text:** names and aliases of your pages written in the clip become LegendKeeper links. It matches whole words only, and the longest name wins, so “Red Dragon” beats “Dragon”. Headings, code and existing links are left alone. By default capitalisation must match, as your aliases suggest LegendKeeper's own auto-linker does: a page named “King” links “King” but not “king”. Add aliases in LegendKeeper for other spellings and plurals.
+- **Links to your pages** lists every proposed link before you import. Untick any you don't want. When a name fits several pages, such as an alias shared by two NPCs, it is left unlinked and shown first, with a menu to pick the right page.
 - **Import images:** copies each image into your project's asset library (folder "LK Web Clipper"). If an image can't be copied, the clip keeps a link to it instead.
 - Check the **Preview** and click **Create page** or **Add to page**. When you add to a page, the clip goes at the end after a divider. Your existing content is never overwritten: if someone edits the page at the same moment, the clipper re-reads it and tries again.
 
 The panel remembers your last destination and Source for each project, so repeated clipping is a right-click and one click.
+
+In **Settings → Linking** you can turn off case matching, and choose whether only the first mention of each page in a clip is linked (the default) or every mention.
+
+The page list refreshes itself: when the panel opens or comes back into view after 10 minutes, every 10 minutes while it is open, and when a search turns up a page the list doesn't have. ⟳ refreshes it immediately, and a refresh never resets what you have filled in.
 
 ## Where your API key is kept
 
@@ -61,7 +67,7 @@ npm test                  # offline unit tests (converter, link resolution, inde
 npm run typecheck
 npm run build             # the extension, into dist/extension (add -- --zip for a zip)
 npm run e2e               # loads the built extension in Chromium and clips into your project
-npm run phase2:import     # converts real web pages and imports them through the same pipeline
+npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
 npm run poc               # the Phase 1 API proof of concept
 ```
 

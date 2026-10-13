@@ -14,7 +14,13 @@ export interface PickerOptions {
   onChange: (resource: IndexedResource | undefined) => void
 }
 
-const TIER_LABEL: Partial<Record<MatchTier, string>> = { [MatchTier.Alias]: 'alias', [MatchTier.Tag]: 'tag', [MatchTier.Content]: 'text' }
+const TIER_LABEL: Partial<Record<MatchTier, string>> = {
+  [MatchTier.FuzzyName]: 'similar',
+  [MatchTier.Alias]: 'alias',
+  [MatchTier.FuzzyAlias]: 'similar alias',
+  [MatchTier.Tag]: 'tag',
+  [MatchTier.Content]: 'text',
+}
 
 /**
  * A search box over the project's pages. Name matches from the local index appear as you type;
@@ -31,7 +37,7 @@ export class Picker {
   private query = 0
 
   constructor(
-    private readonly context: () => { index?: ProjectIndex; lk?: LegendKeeper },
+    private readonly context: () => { index?: ProjectIndex; lk?: LegendKeeper; onMissing?: () => void },
     private readonly options: PickerOptions,
   ) {
     this.input = el('input', { type: 'search', placeholder: options.placeholder, autocomplete: 'off', spellcheck: false })
@@ -94,12 +100,12 @@ export class Picker {
   }
 
   private async searchRemote(): Promise<void> {
-    const { index, lk } = this.context()
+    const { index, lk, onMissing } = this.context()
     const q = this.input.value.trim()
     if (!index || !lk || !q) return
     const query = ++this.query
     try {
-      const hits = (await searchResources(lk, index, q, 40)).filter((hit) => this.allowed(hit.resource)).slice(0, 15)
+      const hits = (await searchResources(lk, index, q, { limit: 40, onMissing })).filter((hit) => this.allowed(hit.resource)).slice(0, 15)
       if (query === this.query && this.input.value.trim() === q) this.show(hits)
     } catch {
       // Name matches are already shown; text matches are a bonus.

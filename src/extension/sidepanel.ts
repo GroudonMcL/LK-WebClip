@@ -5,22 +5,24 @@
  */
 import type { LegendKeeper } from '@legendkeeper/sdk'
 import type { Block } from '@legendkeeper/sdk/blocks'
-import { describeConversion } from '../clip/links.js'
+import { describeTerm, type LinkTerm } from '../clip/links.js'
 import { importClip, prepareClip, type Capture, type ClipPlan, type SourceSpec } from '../clip/importClip.js'
 import { blocksToHtml } from '../clip/preview.js'
 import { createClient } from '../lk/client.js'
-import { describeError } from '../lk/errors.js'
+import { describeError, isNotFound } from '../lk/errors.js'
 import { ProjectIndex, writableDocuments, type IndexedResource } from '../lk/projectIndex.js'
 import { findSources, isSource, listSources, siteName, type SourceConfig } from '../lk/sources.js'
 import { clear, el, timeAgo } from './dom.js'
 import { Picker } from './picker.js'
 import {
-  getPendingCapture, loadCachedIndex, loadRemembered, loadSettings, saveCachedIndex, saveRemembered, saveSettings,
+  DEFAULT_SETTINGS, getPendingCapture, loadCachedIndex, loadRemembered, loadSettings, saveCachedIndex, saveRemembered, saveSettings,
   type PendingCapture, type ProjectSettings, type Settings,
 } from './state.js'
 import { captureTab } from './tabCapture.js'
 
 const INDEX_MAX_AGE_MS = 10 * 60 * 1000
+/** Refreshes asked for by search (pages the list lacks) are at most this frequent. */
+const MIN_REFRESH_GAP_MS = 60 * 1000
 const STALE_CAPTURE_MS = 30 * 60 * 1000
 const app = document.getElementById('app')!
 const status = document.getElementById('index-status')!
@@ -49,15 +51,18 @@ const state: {
   pending?: PendingCapture
   plan?: ClipPlan
   form: Form
+  /** The user's link decisions for the current clip, by term key (see LinkTerm). */
+  linkChoices: Record<string, string | null>
   busy: boolean
 } = {
-  settings: { projects: [], linkify: true, images: true, assetFolder: 'LK Web Clipper' },
+  settings: { ...DEFAULT_SETTINGS },
   indexLoading: false,
+  linkChoices: {},
   form: { mode: 'new', title: '', sourceMode: 'website', websiteName: '', websiteReuse: true, newSourceName: '' },
   busy: false,
 }
 
-const context = () => ({ index: state.index, lk: state.lk })
+const context = () => ({ index: state.index, lk: state.lk, onMissing: () => void refreshIndex({ ifOlderThan: MIN_REFRESH_GAP_MS }) })
 const sourceConfig = (): SourceConfig | undefined =>
   state.project?.sourcesRootId ? { sourcesRootId: state.project.sourcesRootId, sourceTag: state.project.sourceTag } : undefined
 
@@ -65,6 +70,14 @@ const sourceConfig = (): SourceConfig | undefined =>
 
 document.getElementById('open-settings')!.addEventListener('click', () => renderSettings())
 document.getElementById('refresh')!.addEventListener('click', () => void refreshIndex())
+// Keep the page list fresh while the panel is open, and when it comes back into view.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void refreshIndex({ ifOlderThan: INDEX_MAX_AGE_MS })
+})
+setInterval(() => {
+  updateStatus()
+  if (document.visibilityState === 'visible') void refreshIndex({ ifOlderThan: INDEX_MAX_AGE_MS })
+}, 60 * 1000)
 
 void start()
 
@@ -103,8 +116,10 @@ async function selectProject(projectId: string): Promise<void> {
   }
 }
 
-async function refreshIndex(): Promise<void> {
+async function refreshIndex({ ifOlderThan }: { ifOlderThan?: number } = {}): Promise<void> {
   if (!state.lk || !state.project || state.indexLoading) return
+  if (ifOlderThan !== undefined && state.indexLoadedAt && Date.now() - new Date(state.indexLoadedAt).getTime() < ifOlderThan) return
+  const hadIndex = !!state.index
   state.indexLoading = true
   updateStatus()
   try {
@@ -125,7 +140,14 @@ async function refreshIndex(): Promise<void> {
   } finally {
     state.indexLoading = false
     updateStatus()
-    if (app.dataset.view === 'main') renderMain()
+    // A first load draws the form; later refreshes update it in place, so nothing typed is lost.
+    if (app.dataset.view === 'main') {
+      if (!hadIndex || !state.plan) renderMain()
+      else {
+        syncPickers()
+        rebuildPlan()
+      }
+    }
   }
 }
 
@@ -143,6 +165,7 @@ function updateStatus(): void {
 async function onNewCapture(): Promise<void> {
   if (!state.project) return renderSettings()
   const capture = state.pending?.capture
+  state.linkChoices = {}
   if (capture) {
     const remembered = await loadRemembered(state.project.projectId)
     state.form = {
@@ -168,6 +191,7 @@ let targetPicker: Picker
 let sourcePicker: Picker
 let previewBox: HTMLElement
 let summaryBox: HTMLElement
+let linksBox: HTMLElement
 let importButton: HTMLButtonElement
 let progressBox: HTMLElement
 
@@ -200,7 +224,7 @@ function renderMain(): void {
       state.form.targetId = resource?.id
       state.form.targetDocumentId = resource ? writableDocuments(resource)[0]?.id : undefined
       renderTabChoice()
-      update()
+      rebuildPlan() // The page being added to is never linked to itself.
     },
   })
   sourcePicker = new Picker(context, {
@@ -215,6 +239,7 @@ function renderMain(): void {
   const tabChoice = el('div', { id: 'tab-choice' })
   previewBox = el('div', { class: 'preview' })
   summaryBox = el('div', { class: 'summary' })
+  linksBox = el('div', { class: 'links' })
   progressBox = el('div', { class: 'progress', hidden: true })
   importButton = el('button', { class: 'primary', type: 'button', onclick: () => void runImport() }, 'Import')
 
@@ -243,10 +268,12 @@ function renderMain(): void {
     el(
       'div',
       { class: 'options' },
-      checkbox('Link to my pages', state.settings.linkify, 'Links whose text names one of your pages become LegendKeeper links', (v) => ((state.settings.linkify = v), void saveSettings(state.settings), rebuildPlan())),
+      checkbox('Turn web links into page links', state.settings.linkify, 'A link whose text names one of your pages becomes a LegendKeeper link to it', (v) => ((state.settings.linkify = v), void saveSettings(state.settings), rebuildPlan())),
+      checkbox('Link page names in the text', state.settings.linkText, 'Names and aliases of your pages written in the text become LegendKeeper links', (v) => ((state.settings.linkText = v), void saveSettings(state.settings), rebuildPlan())),
       checkbox('Import images', state.settings.images, 'Copy images into your project', (v) => ((state.settings.images = v), void saveSettings(state.settings), rebuildPlan())),
     ),
     summaryBox,
+    linksBox,
     el('div', { class: 'actions' }, importButton),
     progressBox,
     el('h2', { class: 'preview-title' }, 'Preview'),
@@ -273,6 +300,25 @@ async function restorePickers(): Promise<void> {
   sourcePicker.set(source && sourceConfig() && isSource(state.index, source, sourceConfig()!) ? source : undefined, { silent: true })
 }
 
+/** After the page list reloads: point the pickers at the fresh entries, and drop any page that was deleted. */
+function syncPickers(): void {
+  if (!state.index) return
+  const form = state.form
+  const gone: string[] = []
+  for (const [picker, key] of [[parentPicker, 'parentId'], [targetPicker, 'targetId'], [sourcePicker, 'sourceId']] as const) {
+    const id = form[key]
+    if (!id || !picker) continue
+    const fresh = state.index.get(id)
+    if (!fresh) {
+      gone.push(picker.value?.name ?? 'a chosen page')
+      form[key] = undefined
+    }
+    picker.set(fresh, { silent: true })
+  }
+  if (gone.length) showToast(`${gone.join(', ')} no longer exists in LegendKeeper. Choose again.`, 'error')
+  renderTabChoice()
+}
+
 function renderTabChoice(): void {
   const box = document.getElementById('tab-choice')
   if (!box) return
@@ -289,7 +335,13 @@ function renderTabChoice(): void {
 function rebuildPlan(): void {
   const capture = state.pending?.capture
   if (!capture || !state.index) return
-  state.plan = prepareClip(capture, state.index, { linkify: state.settings.linkify, images: state.settings.images, parser: new DOMParser() })
+  const { linkify, linkText, matchCase, firstOnly } = state.settings
+  const exclude = new Set(state.form.mode === 'append' && state.form.targetId ? [state.form.targetId] : [])
+  state.plan = prepareClip(capture, state.index, {
+    links: linkify || linkText ? { hyperlinks: linkify, text: linkText, matchCase, firstOnly, exclude, choices: state.linkChoices } : undefined,
+    images: state.settings.images,
+    parser: new DOMParser(),
+  })
   update()
 }
 
@@ -347,12 +399,11 @@ function update(): void {
     const tab = targetPicker.value.documents.find((d) => d.id === form.targetDocumentId)
     notes.push(`Adds to the end of ${state.index.path(targetPicker.value.id)}${tab && writableDocuments(targetPicker.value).length > 1 ? ` (${tab.name} tab)` : ''}, after a divider`)
   }
-  if (plan.converted.length) notes.push(`${plan.converted.length} link${plan.converted.length === 1 ? '' : 's'} → your pages: ${unique(plan.converted.map(describeConversion)).join(', ')}`)
-  if (plan.ambiguous.length) notes.push(`Kept as web links (more than one page has the name): ${unique(plan.ambiguous.map((a) => a.text)).join(', ')}`)
   if (plan.images.length) notes.push(`${plan.images.length} image${plan.images.length === 1 ? '' : 's'} will be copied into your project`)
   notes.push(...plan.warnings)
 
   clear(summaryBox, ...problems.map((p) => el('p', { class: 'problem' }, p)), el('ul', {}, ...notes.map((n) => el('li', {}, n))))
+  renderLinks(plan.terms)
   importButton.disabled = problems.length > 0 || state.busy
   importButton.textContent = form.mode === 'new' ? 'Create page' : 'Add to page'
 
@@ -361,6 +412,43 @@ function update(): void {
     { kind: 'heading', level: 1, content: [{ text: 'From ' }, { mention: { resourceId: '_source', text: source.label } }] },
   ]
   previewBox.innerHTML = blocksToHtml([...heading, ...plan.blocks], { nameOf: (id) => state.index?.get(id)?.name })
+}
+
+/**
+ * The proposed links, so each can be checked before importing: switched off, or, when a name
+ * fits several pages, pointed at the right one. Names that need a decision come first.
+ */
+function renderLinks(terms: LinkTerm[]): void {
+  const index = state.index
+  if (!index || terms.length === 0) return clear(linksBox)
+  const order = { ambiguous: 0, linked: 1, chosen: 1, off: 2 } as const
+  const sorted = [...terms].sort((a, b) => order[a.status] - order[b.status] || a.text.localeCompare(b.text))
+  const linkedCount = terms.filter((t) => t.linkedTo).length
+  const choose = (term: LinkTerm, value: string | null | undefined) => {
+    if (value === undefined) delete state.linkChoices[term.key]
+    else state.linkChoices[term.key] = value
+    rebuildPlan()
+  }
+  const count = (term: LinkTerm) =>
+    term.linkedTo && term.found > 1 ? (term.linked === term.found ? ` ×${term.found}` : ` (first of ${term.found} mentions)`) : ''
+  const rows = sorted.map((term) => {
+    const where = term.pass === 'hyperlink' ? el('span', { class: 'tier' }, 'web link') : null
+    if (term.candidates.length === 1) {
+      const page = term.candidates[0]!
+      return el('li', { class: term.linkedTo ? '' : 'off' },
+        el('label', { class: 'check', title: index.path(page.id) },
+          el('input', { type: 'checkbox', checked: !!term.linkedTo, onchange: (e: Event) => choose(term, (e.target as HTMLInputElement).checked ? undefined : null) }),
+          el('span', {}, describeTerm({ ...term, linkedTo: page.id }, index), count(term), ' ', where)))
+    }
+    return el('li', { class: term.status === 'ambiguous' ? 'ambiguous' : '' },
+      el('div', {}, el('strong', {}, term.text), ' ', where, term.status === 'ambiguous' ? el('span', { class: 'muted small' }, ` matches ${term.candidates.length} pages`) : count(term)),
+      el('select', { onchange: (e: Event) => choose(term, (e.target as HTMLSelectElement).value || null) },
+        el('option', { value: '', selected: !term.linkedTo }, term.status === 'ambiguous' ? 'Leave unlinked (choose a page…)' : 'Leave unlinked'),
+        ...term.candidates.map((c) => el('option', { value: c.id, selected: term.linkedTo === c.id }, index.path(c.id)))))
+  })
+  clear(linksBox, el('details', { open: true },
+    el('summary', {}, `Links to your pages: ${linkedCount} of ${terms.length}`),
+    el('ul', {}, ...rows)))
 }
 
 async function runImport(): Promise<void> {
@@ -403,6 +491,8 @@ async function runImport(): Promise<void> {
     progressBox.className = 'progress error'
     progressBox.textContent = describeError(error)
     importButton.disabled = false
+    // A page chosen here was deleted in LegendKeeper meanwhile: reload the list so the form shows it.
+    if (isNotFound(error)) void refreshIndex()
   } finally {
     state.busy = false
   }
@@ -519,6 +609,19 @@ function renderSettings(): void {
         project.sourceTag = (e.target as HTMLInputElement).value.trim()
         await saveSettings(state.settings)
       } }), el('p', { class: 'muted small' }, 'Pages with this tag also count as Sources, wherever they are.')),
+    ),
+    el('section', {},
+      el('h3', {}, 'Linking'),
+      checkbox('Match capitalisation', state.settings.matchCase, 'Like LegendKeeper: a page named "King" links "King" but not "king". Add aliases for other spellings.', async (v) => {
+        state.settings.matchCase = v
+        await saveSettings(state.settings)
+      }),
+      el('p', { class: 'muted small' }, 'A page named “King” links “King” but not “king”. Add aliases in LegendKeeper for other spellings and plurals; a lowercase alias still matches at the start of a sentence.'),
+      checkbox('Link only the first mention of each page', state.settings.firstOnly, 'Later mentions of the same page stay plain text', async (v) => {
+        state.settings.firstOnly = v
+        await saveSettings(state.settings)
+      }),
+      el('p', { class: 'muted small' }, 'Otherwise every mention becomes a link, as LegendKeeper’s own auto-linker does.'),
     ),
     el('section', {},
       el('h3', {}, 'Clipping'),

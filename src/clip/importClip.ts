@@ -5,7 +5,7 @@ import { appendToDocument, appendedClip, createPage, newPageClip, type DocumentR
 import type { IndexedResource, ProjectIndex } from '../lk/projectIndex.js'
 import { createSource, type SourceConfig } from '../lk/sources.js'
 import { htmlStringToBlocks, mapBlocks, visit, type ClipImage } from './htmlToBlocks.js'
-import { resolveLinks, type AmbiguousLink, type LinkConversion } from './links.js'
+import { linkClip, type LinkOptions, type LinkTerm } from './links.js'
 
 /** What the capture script sends from the page. */
 export interface Capture {
@@ -23,8 +23,8 @@ export interface Capture {
 }
 
 export interface PrepareOptions {
-  /** Turn links whose text names a page into LegendKeeper mentions. */
-  linkify: boolean
+  /** How to link the clip to existing pages; omit to leave it unlinked. */
+  links?: LinkOptions
   images: boolean
   parser: { parseFromString(html: string, type: 'text/html'): Document }
 }
@@ -33,14 +33,14 @@ export interface PrepareOptions {
 export interface ClipPlan {
   blocks: Block[]
   images: ClipImage[]
-  converted: LinkConversion[]
-  ambiguous: AmbiguousLink[]
+  /** Every name or link that could become a page link, with what was decided for it. */
+  terms: LinkTerm[]
   warnings: string[]
 }
 
 export function prepareClip(capture: Capture, index: ProjectIndex, options: PrepareOptions): ClipPlan {
   const converted = htmlStringToBlocks(capture.html, options.parser, { baseUrl: capture.url, images: options.images })
-  const links = options.linkify ? resolveLinks(converted.blocks, index) : { blocks: converted.blocks, converted: [], ambiguous: [] }
+  const links = options.links ? linkClip(converted.blocks, index, options.links) : { blocks: converted.blocks, terms: [] }
   const warnings = [...converted.warnings]
   if (links.blocks.length === 0) warnings.push('Nothing to import: the capture holds no text or images.')
   // Only images still in the tree count (an image inside a dropped element is gone).
@@ -49,7 +49,7 @@ export function prepareClip(capture: Capture, index: ProjectIndex, options: Prep
     if (block.kind === 'image') srcs.add(block.url)
   })
   const images = converted.images.filter((image, i, all) => srcs.has(image.src) && all.findIndex((other) => other.src === image.src) === i)
-  return { blocks: links.blocks, images, converted: links.converted, ambiguous: links.ambiguous, warnings }
+  return { blocks: links.blocks, images, terms: links.terms, warnings }
 }
 
 export type Destination =
