@@ -42,6 +42,7 @@ Then in the panel:
   - **Keep unfilled template fields**: on keeps the template’s placeholder text where nothing was found; off removes those fields.
   - The “From <Source>” credit goes at the top of the new page, or at the top of what is added to a page. If the template has its own “From [Source]” heading, the credit goes there instead.
   - Anything in the clip that didn’t go in a field is added at the end, after a divider (or under the template’s own “From [Source]” heading, when only placeholder text sits under it).
+  - **Headings that name the page:** a site’s “Bard Class Features” or “As a Level 1 Bard” fills the template’s “[Class] Class Features” or “As a Level 1 Character”. “[Class]” in a Class Template’s headings becomes the page’s name. A table in the template takes the clip’s table with the same column headings. A clip table’s rows the template’s list lacks (“Tool Proficiencies”) are added to the list, with a tick box on the review screen. See [docs/PHASE4.md](docs/PHASE4.md#class-templates-051).
   - **Tags to add** (stat block templates): the creature’s size, type, alignment and challenge rating become tags, e.g. Medium, Humanoid, Any Non-Good Alignment and CR 8. Words in brackets and “Typically” are left out, and a tag your project already has keeps its spelling. Edit or clear them before importing; **Settings → Templates → Tag stat block pages** turns this off.
 - **Source:**
   - **Add a “From <Source>” heading** credits the clip with a heading linking to its Source page. Untick it to clip without a credit (and without a Source).

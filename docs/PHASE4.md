@@ -200,6 +200,31 @@ The draft goes in the box. It is saved only with **Save these notes**, and **Dis
 - **Live template runs:** passed with the free AI model before the day’s OpenRouter limit ran out. That includes the Assassin page, whose links now keep “advantage on attack rolls” as written.
 - **Not measured yet:** `npm run eval:ai` with the notes in every mode. The free daily limit was used up, so its numbers above are still from 0.4.2. Run `npm run eval:ai` and `npm run eval:ai -- --no-notes` to compare.
 
+## Class templates (0.5.1)
+
+You clipped D&D Beyond’s Bard into your Class Template with “Labels then AI writes”, and built **My Bard** to show the page you wanted. Comparing the two showed these problems:
+
+- **Headings with the page’s name.** D&D Beyond names the class where your template has a general word or “[Class]”: “Bard Class Details”, “As a Level 1 Bard”, “Bard Class Features”. Labels never matched them, and the AI placed the parts badly. For example, “Becoming a Bard…” and its headings went into “As a Level 1 Character”, and the class features went into the level table’s field.
+- **“[Class] Class Features” wasn’t a field.** Headings with brackets were all skipped.
+- **The level table had nowhere to go.** No rule matched a table placeholder by its columns.
+- **The instruction box was treated as a field.** “(For the above Tag Index tag the [Class] name…)” became a field, and the AI wrote the first line of my class notes into it.
+
+What changed, all as general rules rather than Bard-specific ones:
+- **Page name stands in.** In a clip’s heading or label, the page’s name may stand for one word of the template’s label, for a “[placeholder]”, or for nothing. So “Bard Class Details” fills Class Details, “As a Level 1 Bard” fills As a Level 1 Character, and “Bard Class Features” fills “[Class] Class Features”. Other words must match exactly.
+- **Bracketed headings.** A template heading whose brackets are a single word (“[Class] Class Features”) is a field. A heading with other brackets (“Level [?]: [Feature Name]”) is still a sample. A heading with nothing under it but sub-headings (“Becoming a [Class]”) only titles them.
+- **“[Class]” in headings becomes the page’s name** when the template is called “Class Template”: “Core Bard Traits”, “Becoming a Bard”, “Bard Class Features”. Paragraphs keep their brackets, so notes to the reader are unchanged.
+- **Notes to the reader aren’t fields.** A text box that is mostly words with a bracket inside, rather than mostly brackets, is left alone.
+- **Sections nested in a bigger section go to their own fields.** “Bard Class Details” spans everything after it, but the lists, the table and the class features go to their own fields. What’s left drops the captions of tables used elsewhere and headings whose content all went elsewhere. Only the introduction paragraphs stay in Class Details.
+- **Table placeholders match by columns.** A table in the template takes the clip table sharing at least two of its column headings (and a third of them): Level, Proficiency Bonus, Class Features. Rows above the matching heading row, such as “——Spell Slots per Spell Level——”, are left out, and the table’s caption goes with it.
+- **Rows the template lacks.** When a clip table fills two or more rows of a template list, its other rows are added at the end of that list (“Tool Proficiencies: Choose 3 Musical Instruments”). The review screen shows them with a tick box, and unticked rows go with the unused content.
+- **Sub-headings keep their depth.** “Level 1: Bardic Inspiration” sat two levels under “Bard Class Features” in the clip, so it stays two levels under the template’s heading (a heading 4 under a heading 2).
+- **AI values copied from the notes are flagged.** A written AI value that repeats five words of the template’s notes which the clip doesn’t have is left unticked: “This is from the template’s AI notes, not the clip.”
+- **Better class notes.** The built-in class notes now explain the D&D Beyond layout field by field.
+
+With labels alone, the Bard now fills every field of the Class Template, with nothing left over. That’s checked by unit tests on a saved copy of the page and live in your project (`npm run phase4:templates`). It is also a case in `npm run eval:ai`.
+
+One deliberate difference from My Bard: “Becoming a [Class]” becomes “Becoming a Bard”, like the template’s other “[Class]” headings.
+
 ## AI engines
 
 - **On-device (Chrome’s built-in AI)**:

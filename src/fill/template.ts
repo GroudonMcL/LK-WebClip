@@ -68,6 +68,8 @@ export interface Slot {
    * of a page, so only content under a heading like it belongs there.
    */
   titled?: boolean
+  /** For a slot holding a table (a class's level table): the table's column headings. */
+  table?: string[]
 }
 
 export const SIDEBAR = -1
@@ -165,13 +167,20 @@ function walkSiblings(blocks: AnyBlock[], at: number[], path: string[], doc: num
         i += length
         continue
       }
-      if (text.includes('[')) {
-        if (namesPage(text)) out.push(slot({ label: 'Name', key: '', path: [...path, text], kind: 'name', placeholder: text, doc, target: { type: 'name', at: here } }))
+      if (text.includes('[') && namesPage(text)) {
+        out.push(slot({ label: 'Name', key: '', path: [...path, text], kind: 'name', placeholder: text, doc, target: { type: 'name', at: here } }))
         continue
       }
+      // "[Class] Class Features" names a part of the page, with the page's subject in brackets; other
+      // brackets ("Level [?]: [Feature Name]") make the heading a sample to copy, not a field.
+      if (text.includes('[') && [...text.matchAll(/\[([^\]]*)\]?/g)].some((m) => !/^\s*\p{L}+\s*$/u.test(m[1]!))) continue
       const length = countWhile(blocks, i + 1, (b) => !SECTION_STOP.has(b.kind))
+      const next = blocks[i + 1]
+      // A heading over sub-headings ("Becoming a [Class]" over "As a Level 1 Character") only titles
+      // them, and a bracketed heading with nothing under it is only a title.
+      if (length === 0 && (text.includes('[') || (next?.kind === 'heading' && (next.level as number) > (block.level as number)))) continue
       const body = blocks.slice(i + 1, i + 1 + length)
-      out.push(slot({ label: text, key: cleanLabel(text), path: [...path, text], kind: 'rich', placeholder: body.map(blockText).join('\n').trim(), doc, target: { type: 'section', at: here, length, level: block.level as number }, titled: true }))
+      out.push(slot({ label: text, key: cleanLabel(text), path: [...path, text], kind: 'rich', placeholder: body.map(blockText).join('\n').trim(), doc, target: { type: 'section', at: here, length, level: block.level as number }, titled: true, ...tableOf(body) }))
       i += length
       continue
     }
@@ -214,19 +223,30 @@ function slotsForProperty(block: AnyBlock, at: number[], path: string[], doc: nu
         : []
     }
     const placeholder = children.map(blockText).join('\n').trim()
+    // "(For the above Tag Index tag the [Class] name…, then remove this text box)": a note to whoever
+    // fills the page, not a field. A placeholder is mostly brackets.
+    if (isWeakLabel(title) && placeholder.includes('[') && !isPlaceholderText(placeholder) && placeholder.replace(/\[[^\]]*\]?/g, ' ').trim().split(/\s+/).length >= 5) return []
     let label = title
     if (isWeakLabel(title)) {
       // "[Size, e.g. Small] [Creature Type…]" or "Description text": the placeholder names it.
       const fromBrackets = placeholderLabels(placeholder).join(', ')
       label = fromBrackets || (placeholder.length <= 40 ? placeholder.replace(/\s+text$/i, '') : '') || title || 'Text'
     }
-    return [{ label, key: isWeakLabel(title) && !label ? '' : cleanLabel(label), path: [...path, label].join(' › '), kind: 'rich' as const, placeholder, doc, target: { type: 'field' as const, at }, ...(isWeakLabel(title) ? {} : { titled: true }) }]
+    return [{ label, key: isWeakLabel(title) && !label ? '' : cleanLabel(label), path: [...path, label].join(' › '), kind: 'rich' as const, placeholder, doc, target: { type: 'field' as const, at }, ...(isWeakLabel(title) ? {} : { titled: true }), ...tableOf(children) }]
   }
   if (block.kind === 'image') {
     const label = title && !isWeakLabel(title) ? title : 'Image'
     return [{ label, key: cleanLabel(label), path: [...path, label].join(' › '), kind: 'image' as const, placeholder: String(block.url ?? ''), doc, target: { type: 'image' as const, at } }]
   }
   return []
+}
+
+/** The column headings of the first table in a slot's placeholder, as { table } to spread into the slot. */
+function tableOf(blocks: AnyBlock[]): { table?: string[] } {
+  const table = blocks.find((b) => b.kind === 'table')
+  const first = (table?.children as AnyBlock[] | undefined)?.[0]
+  const headers = ((first?.children ?? []) as AnyBlock[]).map((cell) => blockText(cell).trim()).filter(Boolean)
+  return headers.length >= 2 ? { table: headers } : {}
 }
 
 function slot(fields: Omit<NewSlot, 'path'> & { path: string[] }): Slot {
@@ -247,7 +267,8 @@ function countWhile(blocks: AnyBlock[], from: number, test: (block: AnyBlock) =>
 
 /** What goes into a slot. `remove` deletes the slot (and its row, field or section) from the page. */
 export type SlotFill =
-  | { runs: Run[] }
+  /** A row's value; `extraRows` are added at the end of the row's list (rows the template lacks). */
+  | { runs: Run[]; extraRows?: { key: string; content: Run[] }[] }
   | { blocks: Block[] }
   | { image: { url: string; alt?: string } }
   | { remove: true }
@@ -266,7 +287,7 @@ export interface FilledTree {
 }
 
 type Edit =
-  | { type: 'rows'; rows: Map<number, Run[] | 'remove'> }
+  | { type: 'rows'; rows: Map<number, Run[] | 'remove'>; extra?: { key: string; content: Run[] }[] }
   | { type: 'children'; children: Block[] }
   | { type: 'remove' }
   | { type: 'image'; url: string; alt?: string }
@@ -294,8 +315,9 @@ export function fillTree(tree: TemplateTree, slots: Slot[], fills: Map<string, S
     const t = slot.target
     const doc = tree.docs[slot.doc]!.blocks as AnyBlock[]
     if (t.type === 'row') {
-      const edit = (docEdits.get(key) as Extract<Edit, { type: 'rows' }> | undefined) ?? { type: 'rows', rows: new Map() }
+      const edit: Extract<Edit, { type: 'rows' }> = (docEdits.get(key) as Extract<Edit, { type: 'rows' }> | undefined) ?? { type: 'rows', rows: new Map() }
       edit.rows.set(t.row, 'remove' in fill ? 'remove' : 'runs' in fill ? fill.runs : 'blocks' in fill ? blocksToRuns(fill.blocks) : [])
+      if ('runs' in fill && fill.extraRows?.length) edit.extra = [...(edit.extra ?? []), ...fill.extraRows]
       docEdits.set(key, edit)
     } else if (t.type === 'field') {
       docEdits.set(key, 'remove' in fill ? { type: 'remove' } : { type: 'children', children: fillBlocks(fill) })
@@ -396,6 +418,7 @@ function rebuild(blocks: AnyBlock[], prefix: string, edits: Map<string, Edit>): 
         const { text: _text, ...rest } = row
         return [{ ...rest, content: value }]
       })
+      rows.push(...(edit.extra ?? []).map((row) => ({ key: row.key, content: row.content }) as unknown as AnyBlock))
       if (rows.length === 0) continue
       block = { ...block, rows }
     } else if (edit?.type === 'children') block = { ...block, children: edit.children }

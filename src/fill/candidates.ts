@@ -41,6 +41,8 @@ export interface Candidate {
   entry?: boolean
   /** For a value the AI copied: the top-level blocks it appears in. */
   found?: number[]
+  /** For a heading's section: the heading's level, so its sub-headings keep their depth under the template's heading. */
+  level?: number
   /**
    * The parts of the clip this uses: "b3" is top-level block 3, "b3.r1" a table row, "b3.c2" a
    * table column, "b3.s0" a paragraph segment. For a section, units[0] is its heading or label line
@@ -53,6 +55,8 @@ export interface Extraction {
   candidates: Candidate[]
   /** Paragraphs split into labelled segments, so unused segments can be kept. */
   split: Map<number, { runs: Run[]; segments: { from: number; to: number; unit: string }[] }>
+  /** A table's caption ("Core Bard Traits", a bold line just before it), by the caption's block index: the table's index. */
+  captions: Map<number, number>
 }
 
 export interface ExtractOptions {
@@ -79,6 +83,7 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
   const withVocabulary = [...new Set([...known, ...[...(options.vocabulary ?? [])].filter((l) => l.includes(' '))])].sort((a, b) => b.length - a.length)
   const candidates: Candidate[] = []
   const split: Extraction['split'] = new Map()
+  const captions: Extraction['captions'] = new Map()
   const add = (c: Omit<Candidate, 'id' | 'key'>) => {
     const key = cleanLabel(c.label)
     if (key) candidates.push({ ...c, id: `c${candidates.length}`, key })
@@ -92,7 +97,8 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
     if (!text || text.length > MAX_LABEL_CHARS) return undefined
     if (knownSet.has(cleanLabel(text))) return text
     const runs = (block.content as Run[]).filter((r) => !('text' in r) || r.text.trim() !== '')
-    const allBold = runs.length > 0 && runs.every((r) => 'text' in r && r.bold)
+    // A link to a page inside a bold line ("Core [[Bard]] Traits") doesn't make it less of a label.
+    const allBold = runs.some((r) => 'text' in r && r.bold) && runs.every((r) => ('text' in r && r.bold) || 'mention' in r)
     return allBold && text.split(/\s+/).length <= MAX_LABEL_WORDS && !/[.!?]$/.test(text) ? text : undefined
   }
 
@@ -103,7 +109,7 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
       let end = i + 1
       while (end < list.length && !(list[end]!.kind === 'heading' && (list[end]!.level as number) <= level)) end++
       const body = list.slice(i + 1, end) as Block[]
-      if (body.length > 0) add({ label: runsText(block.content).trim(), kind: 'section', blocks: body, text: body.map((b) => blockText(b as AnyBlock)).join('\n'), units: range(i, end) })
+      if (body.length > 0) add({ label: runsText(block.content).trim(), kind: 'section', blocks: body, text: body.map((b) => blockText(b as AnyBlock)).join('\n'), units: range(i, end), level })
       continue
     }
     if (block.kind === 'image') {
@@ -119,6 +125,7 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
     if (block.kind !== 'paragraph') continue
 
     const lone = loneLabel(block)
+    if (lone && list[i + 1]?.kind === 'table' && lone.length <= 60) captions.set(i, i + 1)
     if (lone) {
       const next = list[i + 1]
       // "STR" then "8 (-1)": a pair, when the next line is short and not itself a label.
@@ -157,7 +164,7 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
     })
     if (out.length > 0) split.set(i, { runs: pieces.runs, segments: out })
   }
-  return { candidates, split }
+  return { candidates, split, captions }
 }
 
 /**
@@ -351,9 +358,10 @@ function stripLeadingColon(runs: Run[]): Run[] {
  */
 export function leftoverBlocks(blocks: Block[], extraction: Extraction, used: Iterable<string>): Block[] {
   const units = new Set(used)
+  const gone = goneBlocks(blocks, extraction, units)
   const out: Block[] = []
   blocks.forEach((block, i) => {
-    if (units.has(`b${i}`)) return
+    if (gone.has(i)) return
     const split = extraction.split.get(i)
     if (split && split.segments.some((s) => units.has(s.unit))) {
       const keep: Run[] = split.runs.slice(0, split.segments[0]!.from)
@@ -363,9 +371,6 @@ export function leftoverBlocks(blocks: Block[], extraction: Extraction, used: It
     }
     if (block.kind === 'table') {
       const rows = block.children.filter((_, r) => !units.has(`b${i}.r${r}`))
-      const columns = (block.children[0] as AnyBlock | undefined)?.children?.length ?? 0
-      const allColumns = columns > 0 && Array.from({ length: columns }, (_, c) => units.has(`b${i}.c${c}`)).every(Boolean)
-      if (rows.length === 0 || allColumns) return
       if (rows.length < block.children.length) {
         out.push({ ...block, children: rows as typeof block.children })
         return
@@ -374,6 +379,36 @@ export function leftoverBlocks(blocks: Block[], extraction: Extraction, used: It
     out.push(block)
   })
   return out
+}
+
+/**
+ * Top-level blocks wholly used: used themselves, a table whose every row (or column) is used, a
+ * caption whose table is gone, and a heading everything under which is gone ("Becoming a Bard…"
+ * once both its lists are in fields).
+ */
+export function goneBlocks(blocks: Block[], extraction: Extraction, units: Set<string>): Set<number> {
+  const gone = new Set<number>()
+  blocks.forEach((block, i) => {
+    if (units.has(`b${i}`)) gone.add(i)
+    else if (block.kind === 'table') {
+      const rows = block.children.length
+      const columns = (block.children[0] as AnyBlock | undefined)?.children?.length ?? 0
+      const allRows = rows > 0 && Array.from({ length: rows }, (_, r) => units.has(`b${i}.r${r}`)).every(Boolean)
+      const allColumns = columns > 0 && Array.from({ length: columns }, (_, c) => units.has(`b${i}.c${c}`)).every(Boolean)
+      if (allRows || allColumns) gone.add(i)
+    }
+  })
+  for (const [caption, table] of extraction.captions) if (gone.has(table)) gone.add(caption)
+  // Deepest headings first, so a heading over emptied sub-headings goes too.
+  const headings = blocks.map((b, i) => (b.kind === 'heading' ? i : -1)).filter((i) => i >= 0).sort((a, b) => (blocks[b] as AnyBlock).level - (blocks[a] as AnyBlock).level)
+  for (const i of headings) {
+    if (gone.has(i)) continue
+    const level = (blocks[i] as AnyBlock).level as number
+    let end = i + 1
+    while (end < blocks.length && !(blocks[end]!.kind === 'heading' && ((blocks[end] as AnyBlock).level as number) <= level)) end++
+    if (end > i + 1 && Array.from({ length: end - i - 1 }, (_, k) => i + 1 + k).every((k) => gone.has(k))) gone.add(i)
+  }
+  return gone
 }
 
 /** True when two candidates share any part of the clip. */

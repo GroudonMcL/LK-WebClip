@@ -86,6 +86,8 @@ const state: {
   fillOverrides: Record<string, SlotOverride>
   /** The tags to add, as edited on the review screen; undefined uses the suggested ones. */
   tagsText?: string
+  /** "Add rows the template lacks" was unticked on the review screen. */
+  noExtraRows?: boolean
   ai: AiState
   freeModels?: FreeModel[]
   busy: boolean
@@ -212,6 +214,7 @@ async function onNewCapture(): Promise<void> {
   state.linkChoices = {}
   state.fillOverrides = {}
   state.tagsText = undefined
+  state.noExtraRows = undefined
   state.ai = { status: 'idle' }
   expandedSlots.clear()
   if (capture) {
@@ -429,6 +432,9 @@ function rebuildPlan(): void {
       overrides: state.fillOverrides,
       nameOf: (id) => state.index?.get(id)?.name,
       derived: parseDerived(t.derived),
+      templateName: state.template.name,
+      notes: aiNotes()?.text,
+      extraRows: !state.noExtraRows,
     })
     void maybeRunAi()
   }
@@ -711,7 +717,19 @@ function renderTemplateFields(): void {
       el('p', { class: 'muted small' }, unused
         ? `${unused} part${unused === 1 ? '' : 's'} of the clip didn’t fit a field and go${unused === 1 ? 'es' : ''} at the end, after a divider.`
         : 'Everything in the clip went into a field.'),
+      extraRowsField(plan),
       tagsField()))
+}
+
+/** Rows of a clip table added to a template list that lacks them ("Tool Proficiencies"). */
+function extraRowsField(plan: FillPlan): HTMLElement | null {
+  if (plan.extraRows.length === 0 && !state.noExtraRows) return null
+  const names = plan.extraRows.map((r) => `${r.label}: ${r.text}`).join('; ')
+  return checkbox(state.noExtraRows ? 'Add the clip table’s rows the template doesn’t have' : `Also add to the list: ${names}`, !state.noExtraRows,
+    'The template’s list has no row for these, but they are in the same table of the clip as rows it filled', (v) => {
+      state.noExtraRows = !v
+      rebuildPlan()
+    })
 }
 
 /** Tags worked out from a stat block's fields, spelled as the project already spells them. */

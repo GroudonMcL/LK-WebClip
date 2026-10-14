@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 import { DOMParser } from 'linkedom'
 import type { Block } from '@legendkeeper/sdk/blocks'
-import { htmlStringToBlocks } from '../src/clip/htmlToBlocks.js'
+import { htmlStringToBlocks, mapBlocks } from '../src/clip/htmlToBlocks.js'
 import { AiAnswerError, buildAiJob, parseAiAnswer, slotsForAi } from '../src/fill/ai.js'
 import { extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
 import { appendTree, appendedTemplate, applyComposition, compose, tidyRules } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngine } from '../src/fill/engines.js'
-import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
+import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, namedMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
 import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillInput, type SavedRule } from '../src/fill/plan.js'
 import { applyDerived, completes, DEFAULT_DERIVED, deriveValue, parseDerived } from '../src/fill/derived.js'
 import { builtInPackFor, DND5E_STATBLOCK, notesFor, withNotes } from '../src/fill/notes.js'
@@ -771,5 +771,82 @@ describe('built-in notes and AI-suggested notes', () => {
     const write = buildAiJob({ slots, clip: goblin, blockIndexes: goblin.map((_, i) => i), title: 'Goblin', notes: 'Speed: walking first.', write: {} })!
     assert.match(write.prompt, /Notes about this template:\nSpeed: walking first\./)
     assert.equal(write.system, WRITE_SYSTEM_PROMPT)
+  })
+})
+
+describe('class template (D&D Beyond Bard, 2024)', () => {
+  const classTemplate = template('Class_Template')
+  const bard = blocks(readFileSync(new URL('./fixtures/dndbeyond-bard.html', import.meta.url), 'utf8'))
+  const bardPlan = (overrides: Partial<FillInput> = {}) =>
+    planFill({ tree: classTemplate.tree, templateId: classTemplate.id, templateName: 'Class Template', clip: bard, title: 'Bard', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, ...overrides })
+
+  it('lets the page’s name in a clip heading stand for a word or a [placeholder] of the template’s', () => {
+    assert.ok(namedMatch('[Class] Class Features', 'Bard Class Features', 'Bard'))
+    assert.ok(namedMatch('Class Details', 'Bard Class Details', 'Bard'))
+    assert.ok(namedMatch('As a Level 1 Character', 'As a Level 1 Bard', 'Bard'))
+    assert.ok(namedMatch('Actions', 'Goblin Actions', 'Goblin'))
+    assert.ok(!namedMatch('As a Level 1 Character', 'As a Multiclass Bard', 'Bard'))
+    assert.ok(!namedMatch('Class', 'Bard', 'Bard'), 'the name alone matches nothing')
+    assert.ok(!namedMatch('Class Features Table', 'Bard Features', 'Bard'))
+  })
+
+  it('finds the template’s fields, but not its note to the reader or its titles over sub-headings', () => {
+    const labels = buildSlots(classTemplate.tree).filter((s) => s.kind === 'rich').map((s) => s.label)
+    assert.deepEqual(labels, ['Class Details', 'As a Level 1 Character', 'As a Multiclass Character', 'Class Features Table', '[Class] Class Features'])
+    assert.deepEqual(buildSlots(classTemplate.tree).find((s) => s.label === 'Class Features Table')!.table!.slice(0, 3), ['Level', 'Proficiency Bonus', 'Class Features'])
+  })
+
+  it('fills every field from labels alone, leaving nothing over', () => {
+    const p = bardPlan()
+    assert.equal(slotNamed(p, 'Hit Point Die').text, 'D8 per Bard level')
+    assert.equal(slotNamed(p, 'Armour Training').text, 'Light armor')
+    assert.match(slotNamed(p, 'Class Details').text, /^Invoking magic[\s\S]*A Bard’s life[^\n]*$/)
+    assert.ok(!slotNamed(p, 'Class Details').text.includes('Core Bard Traits'), 'not the traits table’s caption')
+    assert.match(slotNamed(p, 'As a Level 1 Character').text, /^Gain all the traits[\s\S]*Bard Features table\.$/)
+    assert.match(slotNamed(p, 'As a Multiclass Character').text, /^Gain the following traits/)
+    assert.match(slotNamed(p, 'Class Features Table').text, /^Level \| Proficiency Bonus \| Class Features \| Bardic Die/, 'the spanning “Spell Slots” row is left out')
+    assert.match(slotNamed(p, '[Class] Class Features').text, /^As a Bard, you gain[\s\S]*Level 1: Bardic Inspiration[\s\S]*Level 20: Words of Creation/)
+    assert.deepEqual(p.extraRows, [{ label: 'Tool Proficiencies', text: 'Choose 3 Musical Instruments' }])
+    assert.deepEqual(p.leftovers, [])
+  })
+
+  it('writes the page like the hand-made one: names in headings, the extra row, features as headings 4', () => {
+    const main = applyComposition(classTemplate.tree, compose(classTemplate.tree, bardPlan(), { keepUnfilled: false })).docs[0]!
+    const all = main.map((b) => blockText(b as AnyBlock)).join('\n')
+    const headings = main.filter((b) => b.kind === 'heading').map((b) => `h${(b as AnyBlock).level} ${blockText(b as AnyBlock)}`)
+    assert.ok(all.startsWith('Core Bard Traits'))
+    assert.ok(headings.includes('h2 Becoming a Bard') && headings.includes('h2 Bard Class Features') && headings.includes('h4 Level 2: Jack of All Trades'))
+    assert.ok(all.includes('Starting Equipment: Choose A or B') && /Starting Equipment: [^\n]*\nTool Proficiencies: Choose 3 Musical Instruments/.test(all), 'the added row comes last in the list')
+    assert.ok(all.includes('(For the above Tag Index tag the [Class] name'), 'the note to the reader keeps its brackets')
+    const unticked = applyComposition(classTemplate.tree, compose(classTemplate.tree, bardPlan({ extraRows: false }), { keepUnfilled: false })).docs[0]!
+    assert.ok(!blockText(unticked[0] as AnyBlock).includes('Tool Proficiencies') && blockText(unticked.at(-1) as AnyBlock).includes('Tool Proficiencies'), 'untick it and the row goes with the unused content')
+  })
+
+  it('lets a section nested in a bigger one go to its own field, in either order', () => {
+    // The user's first run: the AI put "Becoming a Bard…" and its headings into "As a Level 1 Character".
+    const p = bardPlan({ mode: 'labels-ai', ai: new Map() })
+    assert.ok(!slotNamed(p, 'As a Level 1 Character').text.includes('As a Level 1 Bard'), 'the field takes the list, not the heading')
+    assert.ok(!slotNamed(p, 'Class Details').text.includes('Becoming a Bard'), 'a heading whose parts all went elsewhere is dropped')
+  })
+
+  it('flags a written value that comes from the template’s notes, not the clip', () => {
+    const first = plan({ mode: 'labels-ai-write' })
+    const size = slotNamed(first, 'Size, Creature Type, Alignment').slot.id
+    const p = plan({ mode: 'labels-ai-write', notes: 'It is the italic line under the creature name in every stat block.', ai: new Map<string, AiSuggestion>([[size, { blocks: [], value: 'the italic line under the creature name' }]]) })
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').status, 'off')
+    assert.match(slotNamed(p, 'Size, Creature Type, Alignment').warning ?? '', /template’s AI notes/)
+  })
+})
+
+describe('class template with the clip linked to the project', () => {
+  it('still knows a table’s caption when a page name in it became a link ("Core [[Bard]] Traits")', () => {
+    const classTemplate = template('Class_Template')
+    const linked = mapBlocks(blocks(readFileSync(new URL('./fixtures/dndbeyond-bard.html', import.meta.url), 'utf8')), (block) => {
+      if (block.kind !== 'paragraph' || blockText(block as AnyBlock) !== 'Core Bard Traits') return block
+      return { ...block, content: [{ text: 'Core ', bold: true }, { mention: { resourceId: 'bard', text: 'Bard' } }, { text: ' Traits', bold: true }] } as Block
+    })
+    const p = planFill({ tree: classTemplate.tree, templateId: classTemplate.id, templateName: 'Class Template', clip: linked, title: 'Bard', site: '', synonyms, rules: [], mode: 'labels', overrides: {} })
+    assert.match(slotNamed(p, 'Class Details').text, /^Invoking magic/)
+    assert.deepEqual(p.leftovers, [])
   })
 })

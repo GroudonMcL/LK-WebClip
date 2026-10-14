@@ -101,6 +101,25 @@ const CASES: Case[] = [
       'Bonus Actions': null, 'Legendary Actions': null,
     },
   },
+  {
+    // The user's D&D Beyond Bard (2024) into the Class Template: headings name the class where the
+    // template has a general word or [Class], and the level table has a spanning row on top.
+    name: 'Bard',
+    fixture: 'dndbeyond-bard.html',
+    template: 'Class_Template',
+    title: 'Bard',
+    modes: ['labels-ai', 'labels-ai-write', 'ai'],
+    expected: {
+      'Primary Ability': 'Charisma', 'Hit Point Die': 'D8 per Bard level', 'Saving Throw Proficiencies': 'Dexterity and Charisma',
+      'Skill Proficiencies': 'Choose any 3 skills', 'Weapon Proficiencies': 'Simple weapons', 'Armour Training': 'Light armor',
+      'Starting Equipment': /^Choose A or B: \(A\) Leather Armor[\s\S]*90 GP$/,
+      'Class Details': /^Invoking magic[\s\S]*A Bard’s life[^\n]*$/,
+      'As a Level 1 Character': /^Gain all the traits[\s\S]*Bard Features table\.$/,
+      'As a Multiclass Character': /^Gain the following traits/,
+      'Class Features Table': /^Level \| Proficiency Bonus \| Class Features/,
+      '[Class] Class Features': /^As a Bard, you gain[\s\S]*Level 20: Words of Creation/,
+    },
+  },
 ]
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
@@ -127,7 +146,7 @@ for (let run = 1; run <= Number(args.runs); run++) {
     for (const mode of c.modes.filter((m) => !onlyModes || onlyModes.includes(m))) {
       // The template's notes guide the AI in every mode (--no-notes leaves them out, to compare).
       const templateNotes = args['no-notes'] ? undefined : notesFor(c.template.replace(/_/g, ' '), buildSlots(tree), [], synonyms)?.text
-      const base = { tree, templateId: id, clip, title: c.title, site: 'eval', synonyms, rules: [], mode, overrides: {}, derived }
+      const base = { tree, templateId: id, templateName: c.template.replace(/_/g, ' '), clip, title: c.title, site: 'eval', synonyms, rules: [], mode, overrides: {}, derived, notes: templateNotes }
       const first = planFill(base)
       const slots = slotsForAi(first, mode, {})
       const started = Date.now()

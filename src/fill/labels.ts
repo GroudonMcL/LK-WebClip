@@ -125,6 +125,12 @@ export enum LabelMatch {
   Loose = 3,
   /** Within a small typo, for labels of 6 letters or more. */
   Typo = 4,
+  /**
+   * The same once the page's name stands for a word or a placeholder: "Bard Class Features" for
+   * "[Class] Class Features", "As a Level 1 Bard" for "As a Level 1 Character", "Bard Class
+   * Details" for "Class Details". Sites put the subject's name in their headings; templates don't.
+   */
+  Named = 5,
 }
 
 export const LABEL_MATCH_NAMES: Record<LabelMatch, string> = {
@@ -133,6 +139,49 @@ export const LABEL_MATCH_NAMES: Record<LabelMatch, string> = {
   [LabelMatch.Synonym]: 'Synonym',
   [LabelMatch.Loose]: 'Similar label',
   [LabelMatch.Typo]: 'Similar label',
+  [LabelMatch.Named]: 'Similar label',
+}
+
+/** Stand-ins while matching: a template [placeholder], and the page's name in a clip label. */
+const WILD = 'zzplaceholderzz'
+const NAME = 'zzpagenamezz'
+
+function labelWords(text: string): string[] {
+  return text.normalize('NFKC').toLowerCase().replace(/[‘’]/g, "'").match(/[\p{L}\p{N}']+/gu) ?? []
+}
+
+/**
+ * Whether a clip label matches a template label once the page's name (`title`) in the clip label
+ * stands for one word of the template label, or for none, and each [placeholder] in the template
+ * label stands for the page's name. Every other word must be the same, and both labels need a word
+ * of their own besides.
+ */
+export function namedMatch(slotLabel: string, candidateLabel: string, title: string): boolean {
+  const name = labelWords(title)
+  if (name.length === 0) return false
+  const slot = labelWords(slotLabel.replace(/\[[^\]]*\]/g, ` ${WILD} `))
+  const raw = labelWords(candidateLabel)
+  const cand: string[] = []
+  for (let i = 0; i < raw.length; ) {
+    if (name.every((w, k) => raw[i + k] === w)) {
+      cand.push(NAME)
+      i += name.length
+    } else cand.push(raw[i++]!)
+  }
+  if (!cand.includes(NAME) || !cand.some((w) => w !== NAME) || !slot.some((w) => w !== WILD)) return false
+  const memo = new Map<string, boolean>()
+  const match = (i: number, j: number): boolean => {
+    const key = `${i},${j}`
+    const known = memo.get(key)
+    if (known !== undefined) return known
+    let ok: boolean
+    if (j === cand.length) ok = i === slot.length
+    else if (cand[j] === NAME) ok = match(i, j + 1) || (i < slot.length && match(i + 1, j + 1))
+    else ok = i < slot.length && slot[i] === cand[j] && match(i + 1, j + 1)
+    memo.set(key, ok)
+    return ok
+  }
+  return match(0, 0)
 }
 
 /** How well a clip label fits a template label, or undefined when it doesn't. Rules are handled by the caller. */

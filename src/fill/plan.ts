@@ -1,9 +1,9 @@
 import type { Block, Run } from '@legendkeeper/sdk/blocks'
-import { extractCandidates, leftoverBlocks, overlaps, type Candidate, type Extraction } from './candidates.js'
+import { extractCandidates, goneBlocks, leftoverBlocks, overlaps, type Candidate, type Extraction } from './candidates.js'
 import { isWritable } from './ai.js'
 import { applyDerived, completes, type DerivedRule } from './derived.js'
-import { cleanLabel, compareLabels, LabelMatch, type Synonyms } from './labels.js'
-import { blockText, blocksToRuns, buildSlots, runsText, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
+import { cleanLabel, compareLabels, LabelMatch, namedMatch, type Synonyms } from './labels.js'
+import { blockText, blocksToRuns, buildSlots, runsText, SIDEBAR, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
 /**
  * Decides what goes in each slot of a template: saved rules, then label matching, then the AI's
@@ -87,6 +87,12 @@ export interface FillInput {
   nameOf?: (resourceId: string) => string | undefined
   /** Fields worked out from other fields when nothing fills them (Initiative from Dexterity). */
   derived?: DerivedRule[]
+  /** The template's name: "Class Template" makes "[Class]" in its headings stand for the page's name. */
+  templateName?: string
+  /** The notes the AI was given, so a value copied from them rather than the clip is caught. */
+  notes?: string
+  /** Add a clip table's other rows to a template list it filled (default true). */
+  extraRows?: boolean
 }
 
 /** What the clip itself says about a top-level block: the labels in it and the heading it is under. */
@@ -111,6 +117,10 @@ export interface FillPlan {
   blockLabels: Map<number, BlockLabels>
   /** Blocks that only repeat the page's name, which no field takes. */
   titleBlocks: number[]
+  /** "[Class]" in the template's headings, to be written as the page's name ("Core [Class] Traits" → "Core Bard Traits"). */
+  subject?: { placeholder: string; name: string }
+  /** Rows of a clip table added to a template list it filled, because the template has no row for them ("Tool Proficiencies"). */
+  extraRows: { label: string; text: string }[]
 }
 
 const ORIGIN_OF: Record<LabelMatch, SlotOrigin> = {
@@ -119,6 +129,7 @@ const ORIGIN_OF: Record<LabelMatch, SlotOrigin> = {
   [LabelMatch.Synonym]: 'synonym',
   [LabelMatch.Loose]: 'similar',
   [LabelMatch.Typo]: 'similar',
+  [LabelMatch.Named]: 'similar',
 }
 
 /** Every label the template uses, with synonyms, so the clip can be searched for them. */
@@ -150,27 +161,71 @@ function plan(input: FillInput): FillPlan {
   const writable = new Set(input.mode === 'labels-ai-write' ? slots.filter(isWritable).map((s) => s.id) : [])
   const aiCandidates = input.ai ? suggestionsToCandidates(input.ai, input.clip, input.title, writable) : new Map<string, Candidate[]>()
   // Only the clip states facts. The notes' examples are not facts: a small model copies them.
-  const clipFacts = facts(input.clip.map((b) => blockText(b as AnyBlock)).join('\n'))
-  const candidates = [...extraction.candidates, ...[...aiCandidates.values()].flat()]
+  const clipText = input.clip.map((b) => blockText(b as AnyBlock)).join('\n')
+  const clipFacts = facts(clipText)
+  const tables = tableCandidates(input.clip, extraction)
+  const candidates = [...extraction.candidates, ...tables, ...[...aiCandidates.values()].flat()]
   const byId = new Map(candidates.map((c) => [c.id, c]))
 
   const states = new Map<string, SlotState>()
   const used: string[] = []
   const taken = new Set<string>()
   /**
+   * The blocks under a section's heading, by the slot holding them. A field matched by label to a
+   * part of that section takes the part over: "Bard Class Details" holds everything under it until
+   * "As a Level 1 Bard", the level table and "Bard Class Features" go to fields of their own.
+   */
+  const softOwner = new Map<string, string>()
+  const isSection = (c: Candidate) => c.kind === 'section' && c.units.length === c.blocks.length + 1
+  /** Whether `c` lies wholly inside the section held by `owner`, so it may take its part over. */
+  const nestedIn = (c: Candidate, owner: string) => {
+    const held = states.get(owner)?.candidate?.units ?? []
+    return c.units.length > 0 && c.units.every((u) => overlaps([u], held))
+  }
+  const blocking = (c: Candidate, takeOver: boolean) => used.filter((u) => !(takeOver && softOwner.has(u) && nestedIn(c, softOwner.get(u)!)))
+  /**
    * What is left of a candidate once other slots have taken parts of the clip. A section gives up
    * the blocks taken elsewhere (its heading must still be free); anything else is all or nothing.
+   * With `takeOver`, a part of another slot's section is not in the way (label matching only).
    */
-  const available = (c: Candidate): Candidate | undefined => {
+  const available = (c: Candidate, takeOver = false): Candidate | undefined => {
     if (taken.has(c.id)) return undefined
-    if (!overlaps(c.units, used)) return c
-    if (c.kind !== 'section' || c.units.length !== c.blocks.length + 1 || overlaps([c.units[0]!], used)) return undefined
-    const keep = c.blocks.map((_, k) => !overlaps([c.units[k + 1]!], used))
+    const inTheWay = blocking(c, takeOver)
+    if (!overlaps(c.units, inTheWay)) return c
+    if (!isSection(c) || overlaps([c.units[0]!], inTheWay)) return undefined
+    const keep = c.blocks.map((_, k) => !overlaps([c.units[k + 1]!], inTheWay))
     const blocks = c.blocks.filter((_, k) => keep[k])
     if (blocks.length === 0) return undefined
     return { ...c, blocks, units: [c.units[0]!, ...c.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
   }
-  const free = (c: Candidate) => available(c) !== undefined
+  const free = (c: Candidate, takeOver = false) => available(c, takeOver) !== undefined
+  /** Takes `units` out of the sections other slots hold; a section left with nothing is emptied. */
+  const takeFromSections = (units: string[], by: string) => {
+    const lost = new Map<string, Set<string>>()
+    for (const [unit, owner] of softOwner) {
+      if (owner === by || !overlaps([unit], units)) continue
+      if (!lost.has(owner)) lost.set(owner, new Set())
+      lost.get(owner)!.add(unit)
+    }
+    for (const [owner, gone] of lost) {
+      const state = states.get(owner)!
+      const c = state.candidate!
+      for (const unit of gone) {
+        softOwner.delete(unit)
+        used.splice(used.indexOf(unit), 1)
+      }
+      const keep = c.blocks.map((_, k) => !gone.has(c.units[k + 1]!))
+      const blocks = c.blocks.filter((_, k) => keep[k])
+      if (blocks.length === 0) {
+        used.splice(used.indexOf(c.units[0]!), 1)
+        taken.delete(c.id)
+        states.set(owner, { ...state, status: 'empty', candidate: undefined, origin: undefined, text: '' })
+        continue
+      }
+      const rest = { ...c, blocks, units: [c.units[0]!, ...c.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
+      states.set(owner, { ...state, candidate: rest, text: state.slot.kind === 'rich' ? rest.text : state.text })
+    }
+  }
   /**
    * A written value may reformat a line of the clip but not leave part of it out: when every word
    * of it comes from one short unused line, and that line has more ("Medium Humanoid, Any Non-Good
@@ -227,18 +282,20 @@ function plan(input: FillInput): FillPlan {
     const block = input.clip[pick]!
     return { ...c, units: [`b${pick}`], blocks: [block], runs: Array.isArray((block as AnyBlock).content) ? ((block as AnyBlock).content as Run[]) : c.runs }
   }
-  const assign = (slot: Slot, original: Candidate, origin: SlotOrigin) => {
-    const candidate = available(original) ?? original
+  const assign = (slot: Slot, original: Candidate, origin: SlotOrigin, takeOver = false) => {
+    const candidate = available(original, takeOver) ?? original
+    if (takeOver) takeFromSections(candidate.units, slot.id)
     // Show what will be written: a text field gets the whole entry, a row only the value.
     const text = slot.kind === 'rich' ? candidate.blocks.map((b) => blockText(b as AnyBlock)).join('\n') : candidate.text
     states.set(slot.id, { ...states.get(slot.id)!, status: 'filled', candidate, origin, text })
     taken.add(candidate.id)
     used.push(...candidate.units)
+    if (isSection(candidate)) for (const unit of candidate.units.slice(1)) softOwner.set(unit, slot.id)
   }
 
   const fillable = slots.filter((s) => s.kind !== 'name' && s.kind !== 'source')
   for (const slot of slots) {
-    const options = fillable.includes(slot) ? rankOptions(slot, extraction.candidates, input.synonyms, siteRules) : []
+    const options = fillable.includes(slot) ? rankOptions(slot, slot.table ? [...tables, ...extraction.candidates] : extraction.candidates, input.synonyms, siteRules, input.title) : []
     states.set(slot.id, { slot, status: 'empty', text: '', options, contenders: [] })
   }
 
@@ -257,16 +314,18 @@ function plan(input: FillInput): FillPlan {
 
   // 2. Rules and labels, tier by tier. A tie is never guessed.
   if (input.mode !== 'ai') {
-    for (const tier of [LabelMatch.Rule, LabelMatch.Exact, LabelMatch.Synonym, LabelMatch.Loose, LabelMatch.Typo]) {
+    for (const tier of [LabelMatch.Rule, LabelMatch.Exact, LabelMatch.Synonym, LabelMatch.Loose, LabelMatch.Typo, LabelMatch.Named]) {
       const open = fillable.filter((s) => states.get(s.id)!.status === 'empty' && !input.overrides[s.id]?.choice)
       const edges: { slot: Slot; candidate: Candidate }[] = []
       for (const slot of open) {
         for (const candidate of extraction.candidates) {
-          if (!free(candidate) || !fits(slot, candidate)) continue
-          if (matchTier(slot, candidate, input.synonyms, siteRules) === tier) edges.push({ slot, candidate })
+          if (!free(candidate, true) || !fits(slot, candidate)) continue
+          if (matchTier(slot, candidate, input.synonyms, siteRules, input.title) === tier) edges.push({ slot, candidate })
         }
       }
-      for (const slot of open) {
+      // Smaller parts first, so a section nested in a bigger one goes to its own field.
+      const size = (slot: Slot) => Math.min(...edges.filter((e) => e.slot === slot).map((e) => e.candidate.blocks.length))
+      for (const slot of [...open].sort((a, b) => size(a) - size(b))) {
         const mine = edges.filter((e) => e.slot === slot)
         if (mine.length === 0) continue
         // Prefer a pair for a row and a section for a field when both kinds share the label.
@@ -279,8 +338,16 @@ function plan(input: FillInput): FillPlan {
           states.set(slot.id, { ...states.get(slot.id)!, status: 'ambiguous', contenders: distinct.map((e) => e.candidate) })
           continue
         }
-        if (free(distinct[0]!.candidate)) assign(slot, distinct[0]!.candidate, ORIGIN_OF[tier])
+        if (free(distinct[0]!.candidate, true)) assign(slot, distinct[0]!.candidate, ORIGIN_OF[tier], true)
       }
+    }
+    // A table in the template (a class's level table) takes the clip table with its column headings.
+    for (const slot of fillable) {
+      if (!slot.table || states.get(slot.id)!.status !== 'empty' || input.overrides[slot.id]?.choice) continue
+      const match = bestTable(slot.table, tables, input.clip)
+      if (!match || !free(match.candidate, true)) continue
+      assign(slot, match.candidate, 'similar', true)
+      states.get(slot.id)!.note = `Its columns match the template’s table: ${match.columns.join(', ')}.`
     }
     // Images have no labels worth matching: the clip's images go into image slots in order.
     for (const slot of fillable.filter((s) => s.kind === 'image' && states.get(s.id)!.status === 'empty' && !input.overrides[s.id]?.choice)) {
@@ -304,7 +371,7 @@ function plan(input: FillInput): FillPlan {
         const wrote = candidate.id.endsWith(':wrote')
         const verified = wrote || (!candidate.id.endsWith(':written') && !(slot.kind === 'rich' && candidate.units.length === 0))
         const ownWords = facts(`${slot.label} ${slot.placeholder}`)
-        const warning = !verified ? undefined : (wrote ? checkWritten(candidate.text, clipFacts, ownWords) : undefined) ?? aiWarning(slot, candidate, { blockLabels, synonyms: input.synonyms, rules: siteRules, slots: fillable })
+        const warning = !verified ? undefined : (wrote ? checkWritten(candidate.text, clipFacts, ownWords) ?? fromNotes(candidate.text, input.notes, clipText) : undefined) ?? aiWarning(slot, candidate, { blockLabels, synonyms: input.synonyms, rules: siteRules, slots: fillable, title: input.title })
         if (!pick || (verified && !warning && (!pick.verified || pick.warning))) pick = { candidate, verified, warning }
       }
       if (!pick) continue
@@ -324,7 +391,10 @@ function plan(input: FillInput): FillPlan {
       state.status = 'off'
       if (state.candidate) {
         taken.delete(state.candidate.id)
-        for (const unit of state.candidate.units) used.splice(used.indexOf(unit), 1)
+        for (const unit of state.candidate.units) {
+          used.splice(used.indexOf(unit), 1)
+          if (softOwner.get(unit) === slot.id) softOwner.delete(unit)
+        }
       }
     }
   }
@@ -363,11 +433,63 @@ function plan(input: FillInput): FillPlan {
     states.set(slot.id, { ...states.get(slot.id)!, status: 'filled', origin: 'title', text: input.title })
   }
 
+  // A section that gave parts to other fields drops what only went with them: a table's caption
+  // ("Bard Features") and a heading everything under which went elsewhere ("Becoming a Bard…").
+  for (const state of states.values()) {
+    const c = state.candidate
+    if (state.status !== 'filled' || !c || !isSection(c) || c.units.length < 2 || !c.units.every((u) => /^b\d+$/.test(u))) continue
+    const held = new Set(c.units.slice(1).map((u) => blockOf(u)!))
+    const missing = new Set(input.clip.map((_, i) => i).filter((i) => !held.has(i)))
+    const gone = goneBlocks(input.clip, extraction, new Set([...missing].map((i) => `b${i}`)))
+    const keep = c.units.slice(1).map((u) => !gone.has(blockOf(u)!))
+    if (keep.every(Boolean) || !keep.some(Boolean)) continue
+    const blocks = c.blocks.filter((_, k) => keep[k])
+    // The dropped blocks stay used: they belong with what was taken.
+    state.candidate = { ...c, blocks, units: [c.units[0]!, ...c.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
+    if (state.slot.kind === 'rich') state.text = state.candidate.text
+  }
+
+  // A clip table that filled rows of a template list adds the rows the list doesn't have
+  // ("Tool Proficiencies" for a class whose template has no row for it), at the end of the list.
+  const extraRows: FillPlan['extraRows'] = []
+  const extraFor = new Map<string, { key: string; content: Run[] }[]>()
+  if (input.extraRows !== false) {
+    const lists = new Map<string, SlotState[]>()
+    for (const state of states.values()) {
+      if (state.slot.target.type !== 'row' || state.slot.doc === SIDEBAR || state.status !== 'filled' || !state.candidate) continue
+      const key = `${state.slot.doc}:${state.slot.target.at.join('.')}`
+      lists.set(key, [...(lists.get(key) ?? []), state])
+    }
+    for (const rows of lists.values()) {
+      const fromTables = new Map<number, number>()
+      for (const state of rows) for (const unit of state.candidate!.units) {
+        const row = /^b(\d+)\.r\d+$/.exec(unit)
+        if (row) fromTables.set(Number(row[1]), (fromTables.get(Number(row[1])) ?? 0) + 1)
+      }
+      const added: { key: string; content: Run[] }[] = []
+      for (const [table, count] of fromTables) {
+        if (count < 2) continue
+        for (const c of extraction.candidates) {
+          if (c.kind !== 'pair' || c.units.length !== 1 || !c.units[0]!.startsWith(`b${table}.r`) || overlaps(c.units, used) || !c.runs) continue
+          if (rows.some((r) => r.slot.key === c.key) || c.key === titleKey) continue
+          added.push({ key: c.label, content: c.runs })
+          extraRows.push({ label: c.label, text: c.text })
+          used.push(c.units[0]!)
+        }
+      }
+      if (added.length > 0) extraFor.set(rows.at(-1)!.slot.id, added)
+    }
+  }
+
   const fills = new Map<string, SlotFill>()
   for (const state of states.values()) {
     if (state.status !== 'filled') continue
     if (state.slot.kind === 'name') fills.set(state.slot.id, { runs: [{ text: input.title }] })
-    else if (state.candidate) fills.set(state.slot.id, valueFor(state.slot, state.candidate))
+    else if (state.candidate) {
+      const fill = valueFor(state.slot, state.candidate)
+      const extra = extraFor.get(state.slot.id)
+      fills.set(state.slot.id, extra && 'runs' in fill ? { ...fill, extraRows: extra } : fill)
+    }
   }
 
   // A line or heading that is just the page's name (a stat block's title) would only repeat it.
@@ -377,7 +499,62 @@ function plan(input: FillInput): FillPlan {
   for (const i of titleBlocks) if (!overlaps([`b${i}`], used)) used.push(`b${i}`)
   const leftovers = leftoverBlocks(input.clip, extraction, used)
   const unusedBlockIndexes = input.clip.map((_, i) => i).filter((i) => !used.some((u) => u === `b${i}` || u.startsWith(`b${i}.`)))
-  return { slots: slots.map((s) => states.get(s.id)!), candidates, extraction, leftovers, fills, unusedBlockIndexes, blockLabels, titleBlocks }
+  const subjectName = input.templateName?.replace(/\s*template\s*$/i, '').trim()
+  const subject = subjectName ? { placeholder: subjectName, name: input.title } : undefined
+  return { slots: slots.map((s) => states.get(s.id)!), candidates, extraction, leftovers, fills, unusedBlockIndexes, blockLabels, titleBlocks, subject, extraRows }
+}
+
+/** Every top-level table in the clip, whole, with its caption as its heading when it has one. */
+function tableCandidates(clip: Block[], extraction: Extraction): Candidate[] {
+  const out: Candidate[] = []
+  clip.forEach((block, t) => {
+    if (block.kind !== 'table') return
+    const caption = [...extraction.captions].find(([, table]) => table === t)?.[0]
+    const label = caption !== undefined ? blockText(clip[caption] as AnyBlock).trim() : 'Table'
+    out.push({ id: `table:b${t}`, label, key: cleanLabel(label), kind: caption !== undefined ? 'section' : 'pair', blocks: [block], text: blockText(block as AnyBlock), units: caption !== undefined ? [`b${caption}`, `b${t}`] : [`b${t}`] })
+  })
+  return out
+}
+
+/**
+ * The clip table whose column headings best match a template table's: at least two of them, and a
+ * third of the template's. Rows above the matching heading row (a spanning "Spell Slots per Spell
+ * Level" row) are left out, so the table starts as the template's does.
+ */
+function bestTable(headers: string[], tables: Candidate[], clip: Block[]): { candidate: Candidate; columns: string[] } | undefined {
+  const want = headers.map(cleanLabel)
+  let best: { candidate: Candidate; columns: string[]; row: number } | undefined
+  for (const candidate of tables) {
+    const table = clip[blockOf(candidate.units.at(-1)!)!] as AnyBlock
+    const rows = (table.children ?? []) as AnyBlock[]
+    rows.slice(0, 3).forEach((row, r) => {
+      const cells = ((row.children ?? []) as AnyBlock[]).map((cell) => cleanLabel(blockText(cell)))
+      const columns = headers.filter((_, k) => cells.includes(want[k]!))
+      if (columns.length > (best?.columns.length ?? 0)) best = { candidate, columns, row: r }
+    })
+  }
+  if (!best || best.columns.length < 2 || best.columns.length < want.length / 3) return undefined
+  if (best.row === 0) return best
+  const table = best.candidate.blocks[0] as AnyBlock
+  const trimmed = { ...table, children: (table.children as AnyBlock[]).slice(best.row) } as Block
+  return { ...best, candidate: { ...best.candidate, blocks: [trimmed], text: blockText(trimmed as AnyBlock) } }
+}
+
+/**
+ * A written value that repeats a run of five words from the template's notes the clip doesn't have
+ * came from the notes, which describe the template, not this clip.
+ */
+function fromNotes(value: string, notes: string | undefined, clipText: string): string | undefined {
+  if (!notes) return undefined
+  const words = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[‘’]/g, "'").match(/[\p{L}\p{N}']+/gu) ?? []
+  const said = words(value)
+  const inNotes = ` ${words(notes).join(' ')} `
+  const inClip = ` ${words(clipText).join(' ')} `
+  for (let i = 0; i + 5 <= said.length; i++) {
+    const run = ` ${said.slice(i, i + 5).join(' ')} `
+    if (inNotes.includes(run) && !inClip.includes(run)) return 'This is from the template’s AI notes, not the clip.'
+  }
+  return undefined
 }
 
 /**
@@ -438,11 +615,11 @@ function labelBlocks(clip: Block[], extraction: Extraction, titleKey: string): M
  *      (the paragraph under "Description" is not the creature's size and type).
  *   3. A one-line field takes one short line.
  */
-function aiWarning(slot: Slot, candidate: Candidate, { blockLabels, synonyms, rules, slots }: { blockLabels: Map<number, BlockLabels>; synonyms: Synonyms; rules: SavedRule[]; slots: Slot[] }): string | undefined {
+function aiWarning(slot: Slot, candidate: Candidate, { blockLabels, synonyms, rules, slots, title }: { blockLabels: Map<number, BlockLabels>; synonyms: Synonyms; rules: SavedRule[]; slots: Slot[]; title: string }): string | undefined {
   // Prose that happens to contain a copied value ("poison") says nothing; a labelled line does.
   const fitsLabel = (label: string) => {
     const key = cleanLabel(label)
-    return compareLabels(slot.key, key, synonyms) !== undefined || rules.some((r) => r.slotKey === slot.key && r.candidateKey === key)
+    return compareLabels(slot.key, key, synonyms) !== undefined || namedMatch(slot.label, label, title) || rules.some((r) => r.slotKey === slot.key && r.candidateKey === key)
   }
   // Blocks the AI chose must each be right; a copied value must be right in at least one place it appears.
   const chosen = candidate.found === undefined
@@ -471,16 +648,16 @@ function aiWarning(slot: Slot, candidate: Candidate, { blockLabels, synonyms, ru
   return undefined
 }
 
-function matchTier(slot: Slot, candidate: Candidate, synonyms: Synonyms, rules: SavedRule[]): LabelMatch | undefined {
+function matchTier(slot: Slot, candidate: Candidate, synonyms: Synonyms, rules: SavedRule[], title = ''): LabelMatch | undefined {
   if (rules.some((r) => r.slotKey === slot.key && r.candidateKey === candidate.key)) return LabelMatch.Rule
   if (slot.kind === 'image') return undefined
-  return compareLabels(slot.key, candidate.key, synonyms)
+  return compareLabels(slot.key, candidate.key, synonyms) ?? (namedMatch(slot.label, candidate.label, title) ? LabelMatch.Named : undefined)
 }
 
-function rankOptions(slot: Slot, candidates: Candidate[], synonyms: Synonyms, rules: SavedRule[]): Candidate[] {
+function rankOptions(slot: Slot, candidates: Candidate[], synonyms: Synonyms, rules: SavedRule[], title: string): Candidate[] {
   return candidates
     .filter((c) => fits(slot, c))
-    .map((c, i) => ({ c, tier: matchTier(slot, c, synonyms, rules) ?? 9, i }))
+    .map((c, i) => ({ c, tier: matchTier(slot, c, synonyms, rules, title) ?? 9, i }))
     .sort((a, b) => a.tier - b.tier || a.i - b.i)
     .map((x) => x.c)
 }
@@ -496,6 +673,12 @@ function valueFor(slot: Slot, candidate: Candidate): SlotFill {
     return { image: { url: String(image.url), ...(image.alt ? { alt: String(image.alt) } : {}) } }
   }
   if (slot.kind === 'text') return { runs: candidate.runs ?? blocksToRuns(candidate.blocks) }
+  // Sub-headings keep their depth under the section's heading: "Level 1: Bardic Inspiration" two
+  // levels below "Bard Class Features" stays two levels below the template's heading.
+  if (slot.target.type === 'section' && candidate.level !== undefined) {
+    const shift = slot.target.level - candidate.level
+    return { blocks: candidate.blocks.map((b) => (b.kind === 'heading' ? { ...b, level: Math.max(1, Math.min(6, b.level + shift)) as typeof b.level } : b)) }
+  }
   return { blocks: candidate.blocks }
 }
 

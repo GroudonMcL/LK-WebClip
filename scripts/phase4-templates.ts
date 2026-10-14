@@ -88,7 +88,7 @@ async function run_(c: Case): Promise<void> {
     const content = await readTemplate(lk, templateNamed(c.template).id)
     const tree = c.destination === 'new' ? content.tree : appendTree(content.tree)
     const synonyms = new Synonyms(DEFAULT_SYNONYMS)
-    const base = { tree, templateId: content.id, clip: plan.blocks, title: c.capture.suggestedTitle, site: new URL(c.capture.url).hostname, synonyms, rules: [], overrides: {}, nameOf, derived: parseDerived(DEFAULT_DERIVED) }
+    const base = { tree, templateId: content.id, templateName: content.name, notes: notesFor(content.name, buildSlots(tree), [], new Synonyms(DEFAULT_SYNONYMS))?.text, clip: plan.blocks, title: c.capture.suggestedTitle, site: new URL(c.capture.url).hostname, synonyms, rules: [], overrides: {}, nameOf, derived: parseDerived(DEFAULT_DERIVED) }
     let fill = planFill({ ...base, mode: c.mode })
     let ai: Map<string, AiSuggestion> | undefined
     if (c.mode !== 'labels') {
@@ -228,6 +228,30 @@ await run_({
   destination: { appendTo: target2.resource.id },
   verify: ({ blocks }) => {
     check(blocks[1]?.kind === 'rule' && blocks[2]?.kind === 'heading' && plainText([blocks[2]]).startsWith('From ') && blocks[3]?.kind === 'infobox', 'the added content starts with a divider, then the From heading, then the template')
+  },
+})
+
+const bardHtml = await readFile(new URL('../test/fixtures/dndbeyond-bard.html', import.meta.url), 'utf8')
+await run_({
+  title: 'D&D Beyond Bard (2024) → Class Template, new page, labels only (the layout of your “My Bard” page)',
+  capture: capture('selection', bardHtml, 'https://www.dndbeyond.com/classes/2190876-bard', 'Bard', { ogSiteName: 'D&D Beyond' }),
+  template: 'Class Template',
+  mode: 'labels',
+  keepUnfilled: false,
+  destination: 'new',
+  verifyPlan: (fill) => {
+    check(fill.slots.filter((s) => ['text', 'rich'].includes(s.slot.kind)).every((s) => s.status === 'filled'), 'labels alone filled every field')
+    check(fill.leftovers.length === 0, `nothing of the clip is left over (${fill.leftovers.length})`)
+  },
+  verify: ({ blocks, text }) => {
+    const headings = blocks.filter((b) => b.kind === 'heading').map((b) => `h${(b as { level: number }).level} ${plainText([b])}`)
+    check(text.includes('Core Bard Traits') && headings.includes('h2 Becoming a Bard') && headings.includes('h2 Bard Class Features'), '“[Class]” in the template’s headings became “Bard”')
+    check(text.includes('Tool Proficiencies: Choose 3 Musical Instruments'), 'the Tool Proficiencies row the template lacks was added to its list')
+    check(text.includes('(For the above Tag Index tag the [Class] name'), 'the template’s note to the reader was left alone')
+    check(headings.includes('h4 Level 1: Bardic Inspiration') && headings.includes('h4 Level 20: Words of Creation'), 'each class feature is a heading 4 under “Bard Class Features”')
+    const details = blocks.findIndex((b) => b.kind === 'heading' && plainText([b]) === 'Class Details')
+    check(plainText([blocks[details + 1]!]).startsWith('Invoking magic') && blocks[details + 4]?.kind === 'rule', 'Class Details holds the three introduction paragraphs')
+    check(!text.includes('Spell Slots per Spell Level') && text.includes('Level | Proficiency Bonus | Class Features | Bardic Die'), 'the level table starts at its Level row')
   },
 })
 

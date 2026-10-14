@@ -1,6 +1,6 @@
 {
   "name": "lk-webclip",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "LegendKeeper web clipper: a Chrome extension that clips web content into LegendKeeper",
   "type": "module",

@@ -1,4 +1,4 @@
-import { rule, type Block } from '@legendkeeper/sdk/blocks'
+import { rule, type Block, type Run } from '@legendkeeper/sdk/blocks'
 import type { FillPlan } from './plan.js'
 import { buildSlots, fillTree, forCopy, SIDEBAR, type AnyBlock, type FilledTree, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
@@ -27,6 +27,8 @@ export interface Composition {
   tail: Block[]
   /** The tab that gets the tail: the one named Main, else the first. */
   mainDoc: number
+  /** "[Class]" in the template's headings, written as the page's name. */
+  subject?: { placeholder: string; name: string }
 }
 
 export function mainDocIndex(tree: TemplateTree): number {
@@ -64,7 +66,7 @@ export function compose(tree: TemplateTree, plan: FillPlan, options: ComposeOpti
   const head = options.sourceHeading && sourceSlots.length === 0 ? [options.sourceHeading] : []
   const rest = placed ? [] : leftovers
   const tail = rest.length > 0 ? [rule(), ...rest] : []
-  return { fills, head, tail, mainDoc }
+  return { fills, head, tail, mainDoc, ...(plan.subject ? { subject: plan.subject } : {}) }
 }
 
 function originalBlock(tree: TemplateTree, slot: Slot): Block | undefined {
@@ -86,7 +88,53 @@ export function applyComposition(tree: TemplateTree, composition: Composition): 
   const filled = fillTree(tree, slots, composition.fills)
   filled.docs[composition.mainDoc] = [...composition.head, ...(filled.docs[composition.mainDoc] ?? []), ...composition.tail]
   filled.docs = filled.docs.map(tidyRules)
+  if (composition.subject) filled.docs = filled.docs.map((blocks) => namedHeadings(blocks, composition.subject!))
   return { ...filled, missing }
+}
+
+/**
+ * Writes the page's name for the template's subject in brackets in its headings: in a Class
+ * Template, "Core [Class] Traits" becomes "Core Bard Traits" and "[Class] Class Features" "Bard
+ * Class Features". Paragraphs keep their brackets: they are placeholders or notes to the reader.
+ */
+/** Replaces matches of `pattern` in runs, also where a match spans runs ("Core [" + italic "Class] "). */
+function replaceInRuns(runs: Run[], pattern: RegExp, replacement: string): Run[] {
+  const text = runs.map((r) => ('text' in r ? r.text : '\u0000')).join('')
+  const matches = [...text.matchAll(pattern)].map((m) => ({ start: m.index, end: m.index + m[0].length }))
+  if (matches.length === 0) return runs
+  const out: Run[] = []
+  let offset = 0
+  for (const run of runs) {
+    const length = 'text' in run ? run.text.length : 1
+    if (!('text' in run)) {
+      out.push(run)
+      offset += length
+      continue
+    }
+    let piece = ''
+    for (let k = 0; k < run.text.length; k++) {
+      const at = offset + k
+      const match = matches.find((m) => at >= m.start && at < m.end)
+      if (!match) piece += run.text[k]
+      else if (at === match.start) piece += replacement
+    }
+    if (piece) out.push({ ...run, text: piece })
+    offset += length
+  }
+  return out
+}
+
+export function namedHeadings(blocks: Block[], subject: { placeholder: string; name: string }): Block[] {
+  const pattern = new RegExp(`\\[\\s*${subject.placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\]`, 'gi')
+  const walk = (list: AnyBlock[]): AnyBlock[] =>
+    list.map((block) => {
+      let out = block
+      if (block.kind === 'heading' && Array.isArray(block.content)) out = { ...block, content: replaceInRuns(block.content as Run[], pattern, subject.name) }
+      if (Array.isArray(out.children)) out = { ...out, children: walk(out.children as AnyBlock[]) }
+      if (out.kind === 'infobox' && Array.isArray(out.rows)) out = { ...out, rows: walk(out.rows as AnyBlock[]) }
+      return out
+    })
+  return walk(blocks as AnyBlock[]) as Block[]
 }
 
 /** Removing an unfilled section can leave two dividers together, or one at the end: keep one. */
