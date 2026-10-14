@@ -58,6 +58,7 @@ function isQuotaError(error: unknown): boolean {
 /** The parts of Chrome's Prompt API used here (Chrome 138+, extension pages; not in workers). */
 interface LanguageModelSession {
   prompt(input: string, options?: { responseConstraint?: unknown; signal?: AbortSignal }): Promise<string>
+  clone?(options?: { signal?: AbortSignal }): Promise<LanguageModelSession>
   destroy(): void
   contextWindow?: number
   contextUsage?: number
@@ -97,26 +98,29 @@ export const ON_DEVICE_HELP: Record<OnDeviceStatus, string> = {
 }
 
 /**
- * Chrome's built-in model. One session is kept while the panel is open (creating one takes time),
- * and it is made with a low temperature so answers are consistent from one clip to the next.
+ * Chrome's built-in model. A session is kept for each system prompt while the panel is open
+ * (creating one takes time), made with a low temperature so answers are consistent from one clip
+ * to the next. Each clip is asked in a copy of it, so earlier clips never colour the answer.
  */
 export class OnDeviceEngine implements AiEngine {
   readonly name = 'On-device AI'
   maxChars = 6000
-  private session: Promise<LanguageModelSession> | undefined
+  private sessions = new Map<string, Promise<LanguageModelSession>>()
 
   /** Creates the session; the first call downloads the model, so it must follow a click. */
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
-    await this.getSession(onProgress)
+    await this.getSession(SYSTEM_PROMPT, onProgress)
   }
 
-  private getSession(onProgress?: (fraction: number) => void): Promise<LanguageModelSession> {
+  private getSession(system: string, onProgress?: (fraction: number) => void): Promise<LanguageModelSession> {
     const api = languageModel()
     if (!api) return Promise.reject(new AiUnavailableError(ON_DEVICE_HELP.unsupported))
-    this.session ??= (async () => {
+    const existing = this.sessions.get(system)
+    if (existing) return existing
+    const session = (async () => {
       const options: Record<string, unknown> = {
         ...LANGUAGES,
-        initialPrompts: [{ role: 'system', content: SYSTEM_PROMPT }],
+        initialPrompts: [{ role: 'system', content: system }],
         monitor(m: EventTarget) {
           m.addEventListener('downloadprogress', (e) => onProgress?.((e as Event & { loaded: number }).loaded))
         },
@@ -142,21 +146,27 @@ export class OnDeviceEngine implements AiEngine {
       if (window) this.maxChars = Math.max(2000, Math.floor(window * 4 * 0.6))
       return session
     })()
-    this.session.catch(() => (this.session = undefined))
-    return this.session
+    this.sessions.set(system, session)
+    session.catch(() => this.sessions.delete(system))
+    return session
   }
 
   async run(job: AiJob, signal?: AbortSignal): Promise<string> {
     const status = await onDeviceStatus()
     if (status !== 'available') throw new AiUnavailableError(ON_DEVICE_HELP[status])
-    const session = await this.getSession()
     // The system prompt is in the session already.
-    return session.prompt(job.prompt, { responseConstraint: job.schema, signal })
+    const base = await this.getSession(job.system)
+    const session = base.clone ? await base.clone({ signal }) : base
+    try {
+      return await session.prompt(job.prompt, { responseConstraint: job.schema, signal })
+    } finally {
+      if (session !== base) session.destroy()
+    }
   }
 
   destroy(): void {
-    void this.session?.then((s) => s.destroy()).catch(() => {})
-    this.session = undefined
+    for (const session of this.sessions.values()) void session.then((s) => s.destroy()).catch(() => {})
+    this.sessions.clear()
   }
 }
 

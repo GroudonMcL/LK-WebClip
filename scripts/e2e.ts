@@ -235,7 +235,7 @@ try {
   await pick(panel, 'Search for the parent page…', runName)
   const statblockTemplate = [...index.byId.values()].find((r) => r.name === 'Statblock Template' && index.isTemplate(r.id))!
   await panel.locator('.field', { hasText: 'Template' }).locator('select').first().selectOption(statblockTemplate.id)
-  await panel.getByRole('radio', { name: 'Labels then AI' }).click()
+  await panel.getByRole('radio', { name: 'Labels then AI', exact: true }).click()
   await panel.getByText('Keep unfilled template fields').click()
   const fields = panel.locator('.template-fields')
   await panel.locator('.template-ai').getByText(/suggested 2 of/).waitFor({ timeout: 30_000 })
@@ -253,6 +253,16 @@ try {
   const shortbow = await legendary.locator('option', { hasText: '“Shortbow”' }).getAttribute('value')
   await legendary.locator('select').selectOption(shortbow!)
   await fields.locator('li[data-slot="Legendary Actions"]').getByText(/Remember for 127\.0\.0\.1/).click()
+  // "Labels then AI writes": the AI gets the built-in stat block notes; then back to "Labels then AI".
+  await panel.getByRole('radio', { name: 'Labels then AI writes' }).click()
+  await panel.getByText('The built-in “D&D 5e stat block” notes guide it.').waitFor()
+  await panel.locator('.template-ai').getByText(/suggested \d+ of/).waitFor({ timeout: 30_000 })
+  await panel.locator('.ai-exchange summary').click()
+  const exchange = await panel.locator('.ai-exchange').innerText()
+  check(exchange.includes('Notes about this template:') && exchange.includes('— write: a short value'), '“Labels then AI writes” gives the AI the built-in stat block notes and lets it write short fields')
+  await panel.screenshot({ path: `${shots}template-write.png`, fullPage: true })
+  await panel.getByRole('radio', { name: 'Labels then AI', exact: true }).click()
+  await panel.locator('.template-ai').getByText(/suggested 2 of/).waitFor({ timeout: 30_000 })
   const summaryLine = await fields.locator('summary').first().innerText()
   console.log(`  ${summaryLine}`)
   await panel.screenshot({ path: `${shots}template-review.png`, fullPage: true })
@@ -286,6 +296,15 @@ try {
 
   await panel.locator('#open-settings').click()
   check(await panel.getByText('“Shortbow” → “Legendary Actions”').isVisible(), 'the remembered choice is listed under Saved rules')
+  const notesField = panel.locator('.field', { hasText: 'AI notes for templates' })
+  await notesField.locator('select').selectOption('Statblock Template')
+  await notesField.getByText('Using the built-in “D&D 5e stat block” notes').waitFor()
+  await notesField.locator('textarea').fill('Initiative: the Dexterity modifier, such as +2.')
+  await notesField.locator('textarea').dispatchEvent('change')
+  await notesField.getByText('Your notes for Statblock Template.').waitFor()
+  check(true, 'notes for a template can be written in Settings, replacing the built-in ones')
+  await notesField.getByRole('button', { name: 'Remove your notes' }).click()
+  await notesField.getByText('Using the built-in “D&D 5e stat block” notes').waitFor()
 } catch (error) {
   failures++
   console.log(`  ✘ ${error instanceof Error ? error.message.split('\n')[0] : error}`)

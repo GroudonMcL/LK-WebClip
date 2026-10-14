@@ -1,6 +1,7 @@
 import type { Capture } from '../clip/importClip.js'
 import { DEFAULT_DERIVED } from '../fill/derived.js'
 import { DEFAULT_SYNONYMS, SYNONYMS_VERSION } from '../fill/labels.js'
+import type { TemplateNotes } from '../fill/notes.js'
 import type { FillMode, SavedRule } from '../fill/plan.js'
 import type { IndexedResource } from '../lk/projectIndex.js'
 
@@ -39,6 +40,8 @@ export interface TemplateSettings {
   synonymsVersion: number
   /** Worked-out fields, one rule per line ("Initiative = Dexterity modifier"). */
   derived: string
+  /** Your notes for the AI about each template, for "Labels then AI writes". */
+  notes: TemplateNotes[]
   openRouterKey: string
   /** A free model id (ending in ":free"). */
   openRouterModel: string
@@ -55,6 +58,7 @@ export const DEFAULT_TEMPLATE_SETTINGS: TemplateSettings = {
   synonyms: DEFAULT_SYNONYMS,
   synonymsVersion: SYNONYMS_VERSION,
   derived: DEFAULT_DERIVED,
+  notes: [],
   openRouterKey: '',
   openRouterModel: '',
   openRouterWarned: false,

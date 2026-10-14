@@ -119,6 +119,38 @@ In "Labels then AI", the mode you used, those runs had 85 of 88 fields right, 1 
 
 When a fill goes wrong, the clip becomes a fixture, the bad answer becomes a replay test in `test/fill.test.ts`, and the clip becomes a case in `scripts/eval-ai.ts`. Then the fix is measured across every saved clip, not just the one that failed. Gemini Nano itself still can't be run here (it only runs inside Chrome), so the small OpenRouter model stands in for it.
 
+## Labels then AI writes (0.4.2)
+
+The three earlier modes only let the AI *pick* parts of the clip. **Labels then AI writes** gives it more scope where that helps, with a firm limit on what it may add.
+
+**What it may do**
+- **Labels first:** label matching runs as in the other modes.
+- **Short fields:** for the fields left, the AI may write a short value in the template's style. That covers one-line rows and short text fields named by their placeholder, such as "Size, Creature Type, Alignment". Writing includes rewording, reordering, combining (damage and condition immunities in one field) and working out simple values the notes explain.
+- **Long sections** (Traits, Actions, Description, a placeholder for paragraphs) still take the clip's own paragraphs, so links and formatting survive.
+
+**Notes about the template**
+- **Built-in pack:** a template that fits the D&D 5e stat block pack (three or more of AC, HP, Speed, ability scores, CR) uses it automatically.
+- **Your own notes:** **Settings → Templates → AI notes for templates** lists every template in the project, plus any you have notes for. It shows the built-in notes where they apply and lets you write your own for any template, new ones included. Your notes replace the built-in ones; **Remove your notes** goes back.
+- **Where they're kept:** in the extension, by template name.
+- **Size:** they share the model's space with the clip, so keep them short.
+
+**Checks on what it writes.** A written value is marked **Written by AI**. It is ticked only when:
+- **Every number in it is in the clip**, so "12" in Immunities is flagged.
+- **Every capitalised word (a name, a type) is in the clip** or the field's own label. The notes' examples don't count: in testing, a small model copied the pack's Assassin example into a Zombie, and this rule catches that. The examples are now marked as format-only and use a creature unlikely to be clipped.
+- **It doesn't shorten one of the clip's lines.** If every word comes from one line and some of that line is missing ("Medium Humanoid, Any Non-Good Alignment"), the clip's line is used instead.
+- **Square brackets are dropped.** They only mark template placeholders, so "[Small] [Humanoid]…" loses them.
+
+All the earlier checks (labels, headings, page name) still apply. On Chrome's built-in AI, each mode has its own session, and each clip is asked in a fresh copy of it, so earlier clips never colour an answer.
+
+**Measured with `npm run eval:ai`** on three saved clips: the Goblin, the Assassin, and a fan-wiki Zombie with lowercase values and an ability table.
+
+| Model | Labels then AI | Labels then AI writes | AI |
+| --- | --- | --- | --- |
+| dots-3-note-preview (default free model), one run | 65/65 right | 65/65 right | 65/65 right |
+| liquid/lfm-2.5-2.6b (Nano-sized), two runs, final rules | 0 wrong, 1 caught, 1 missed of 130 | 0 wrong, 2 caught, 1 missed of 130 | not re-run |
+
+On the small model, writing first made 3 wrong fills, then 2, before the rules above were added; each rule came from one of those mistakes. Gemini Nano itself can still only be tested in your Chrome.
+
 ## AI engines
 
 - **On-device (Chrome’s built-in AI)**:
@@ -136,7 +168,7 @@ When a fill goes wrong, the clip becomes a fixture, the bad answer becomes a rep
 
 ## How it was tested
 
-- **131 unit tests** (`npm test`; 111 in 0.4.0), run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
+- **140 unit tests** (`npm test`; 111 in 0.4.0), run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
   - slot finding;
   - every candidate pattern;
   - matching, ties, your choices, saved rules and AI checks;

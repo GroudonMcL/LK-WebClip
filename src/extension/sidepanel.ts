@@ -10,6 +10,7 @@ import { importClip, prepareClip, type Capture, type ClipPlan, type SourceSpec }
 import { blocksToHtml } from '../clip/preview.js'
 import { slotsForAi, SYSTEM_PROMPT } from '../fill/ai.js'
 import { DEFAULT_DERIVED, parseDerived } from '../fill/derived.js'
+import { builtInPackFor, notesFor, savedNotes, withNotes } from '../fill/notes.js'
 import { appendTree, appendedTemplate, applyComposition, compose, type Composition } from '../fill/compose.js'
 import { AiUnavailableError, listFreeModels, ON_DEVICE_HELP, onDeviceStatus, OnDeviceEngine, OpenRouterEngine, suggest, type AiEngine, type FreeModel } from '../fill/engines.js'
 import { DEFAULT_SYNONYMS, formatSynonyms, parseSynonyms, Synonyms } from '../fill/labels.js'
@@ -58,6 +59,7 @@ interface AiState {
   message?: string
   suggestions?: Map<string, AiSuggestion>
   /** What the AI was asked and answered, shown on request so a bad answer can be understood. */
+  system?: string
   prompt?: string
   raw?: string
 }
@@ -444,6 +446,7 @@ function effectiveMode(): FillMode | undefined {
   if (t.fillMode === 'labels' && labels) return 'labels'
   if (t.fillMode === 'ai' && ai) return 'ai'
   if (t.fillMode === 'labels-ai' && labels && ai) return 'labels-ai'
+  if (t.fillMode === 'labels-ai-write' && labels && ai) return 'labels-ai-write'
   return labels ? 'labels' : ai ? 'ai' : undefined
 }
 
@@ -506,10 +509,11 @@ function templateGroup(): HTMLElement | null {
     labels: t.labels ? undefined : 'Label matching is off in Settings',
     ai: t.ai === 'off' ? 'Turn on AI assist in Settings' : undefined,
     'labels-ai': !t.labels ? 'Label matching is off in Settings' : t.ai === 'off' ? 'Turn on AI assist in Settings' : undefined,
+    'labels-ai-write': !t.labels ? 'Label matching is off in Settings' : t.ai === 'off' ? 'Turn on AI assist in Settings' : undefined,
   }
   const mode = effectiveMode()
   const modes = el('div', { class: 'segmented', role: 'radiogroup' },
-    ...(([['labels', 'Labels'], ['ai', 'AI'], ['labels-ai', 'Labels then AI']] as [FillMode, string][]).map(([value, label]) =>
+    ...(([['labels', 'Labels'], ['ai', 'AI'], ['labels-ai', 'Labels then AI'], ['labels-ai-write', 'Labels then AI writes']] as [FillMode, string][]).map(([value, label]) =>
       el('button', {
         type: 'button', role: 'radio', 'aria-checked': String(value === mode), class: value === mode ? 'on' : '', 'data-name': 'fill', 'data-value': value,
         disabled: !!reasons[value], title: reasons[value] ?? '',
@@ -524,7 +528,7 @@ function templateGroup(): HTMLElement | null {
     : 'Adds the template’s main tab, filled in, to the end of the page after a divider. The page’s sidebar is not changed.'
   return el('div', { class: 'group' },
     field('Template', select, el('p', { class: 'muted small' }, state.templateLoading ? 'Reading the template…' : note)),
-    field('Fill with', modes, mode ? null : el('p', { class: 'muted small' }, 'Label matching and AI are both off, so the clip goes under the template as it is.')),
+    field('Fill with', modes, el('p', { class: 'muted small' }, mode ? FILL_MODE_HELP[mode](aiNotes()?.from) : 'Label matching and AI are both off, so the clip goes under the template as it is.')),
     checkbox('Keep unfilled template fields', t.keepUnfilled, 'Fields nothing was found for keep the template’s placeholder; untick to remove them', (v) => {
       t.keepUnfilled = v
       void saveSettings(state.settings)
@@ -532,8 +536,24 @@ function templateGroup(): HTMLElement | null {
     }))
 }
 
+const FILL_MODE_HELP: Record<FillMode, (notesFrom?: string) => string> = {
+  labels: () => 'Fields whose label is in the clip. No AI.',
+  ai: () => 'The AI picks a part of the clip for every field.',
+  'labels-ai': () => 'Labels first; the AI picks parts of the clip for the fields left.',
+  'labels-ai-write': (from) => `Labels first; the AI fills the fields left and may write short ones in the template’s style, using only the clip’s facts. ${
+    from === 'yours' ? 'Your notes for this template guide it.' : from ? `The built-in “${from}” notes guide it.` : 'Add notes for this template in Settings to guide it.'}`,
+}
+
+/** The notes the AI gets about the chosen template in "Labels then AI writes". */
+function aiNotes(): { text: string; from: string } | undefined {
+  if (!state.template) return undefined
+  const t = state.settings.templates
+  return notesFor(state.template.name, buildSlots(state.template.tree), t.notes, new Synonyms(t.synonyms))
+}
+
 function aiKey(): string {
-  return [state.pending?.id, state.template?.id, state.template?.updatedAt, state.form.mode, effectiveMode()].join('|')
+  const notes = effectiveMode() === 'labels-ai-write' ? aiNotes()?.text : ''
+  return [state.pending?.id, state.template?.id, state.template?.updatedAt, state.form.mode, effectiveMode(), notes].join('|')
 }
 
 async function aiEngine(): Promise<AiEngine> {
@@ -570,7 +590,7 @@ async function maybeRunAi({ again = false } = {}): Promise<void> {
     const engine = await aiEngine()
     state.ai.message = `Asking ${engine.name} about ${slots.length} field${slots.length === 1 ? '' : 's'}…`
     renderAi()
-    const result = await suggest(engine, { slots, clip: state.plan.blocks, blockIndexes, title: state.form.title.trim() || capture.suggestedTitle, nameOf: (id) => state.index?.get(id)?.name, labels: plan.blockLabels })
+    const result = await suggest(engine, { slots, clip: state.plan.blocks, blockIndexes, title: state.form.title.trim() || capture.suggestedTitle, nameOf: (id) => state.index?.get(id)?.name, labels: plan.blockLabels, write: mode === 'labels-ai-write' ? { notes: aiNotes()?.text } : undefined })
     if (state.ai.key !== key) return
     const seconds = ((Date.now() - started) / 1000).toFixed(1)
     state.ai = {
@@ -578,6 +598,7 @@ async function maybeRunAi({ again = false } = {}): Promise<void> {
       status: 'done',
       suggestions: result.suggestions,
       prompt: result.job?.prompt,
+      system: result.job?.system,
       raw: result.raw,
       message: `${engine.name} suggested ${result.suggestions.size} of ${slots.length} field${slots.length === 1 ? '' : 's'} in ${seconds} s.${result.truncated ? ' The clip was shortened to fit the model.' : ''}`,
     }
@@ -603,13 +624,13 @@ function renderAi(): void {
     state.ai.prompt
       ? el('details', { class: 'ai-exchange' },
           el('summary', { class: 'small' }, 'What the AI was asked and answered'),
-          el('pre', {}, `${SYSTEM_PROMPT}\n\n${state.ai.prompt}`),
+          el('pre', {}, `${state.ai.system ?? SYSTEM_PROMPT}\n\n${state.ai.prompt}`),
           el('pre', {}, state.ai.raw ?? ''))
       : null)
 }
 
 const ORIGINS: Record<SlotOrigin, string> = {
-  rule: 'Saved rule', label: 'Label', synonym: 'Synonym', similar: 'Similar label', ai: 'AI', 'ai-written': 'AI-written', derived: 'Worked out', manual: 'Your choice', typed: 'Typed', title: 'Page name',
+  rule: 'Saved rule', label: 'Label', synonym: 'Synonym', similar: 'Similar label', ai: 'AI', 'ai-written': 'AI-written', 'ai-wrote': 'Written by AI', derived: 'Worked out', manual: 'Your choice', typed: 'Typed', title: 'Page name',
 }
 
 /** The review screen: each field, what was found for it, and controls to change it. */
@@ -1071,6 +1092,72 @@ function renderSettings(): void {
   keyInput.addEventListener('keydown', (e) => e.key === 'Enter' && void connect())
 }
 
+/** The template whose AI notes Settings shows; kept while the panel is open. */
+let notesTemplate: string | undefined
+
+/**
+ * Settings: your notes for the AI about each template, used by "Labels then AI writes". A
+ * template without notes uses the built-in pack that fits it, if any, which you can edit into
+ * your own.
+ */
+function templateNotesEditor(): HTMLElement {
+  const t = state.settings.templates
+  const inProject = state.index ? listTemplates(state.index).map((x) => x.resource) : []
+  const names = [...new Set([...inProject.map((r) => r.name), ...t.notes.map((n) => n.templateName)])]
+  notesTemplate = notesTemplate && names.includes(notesTemplate) ? notesTemplate : state.template?.name ?? names[0]
+  const status = el('p', { class: 'muted small' })
+  const remove = el('button', { type: 'button', class: 'link small', hidden: true }, 'Remove your notes')
+  const text = el('textarea', { spellcheck: true, 'aria-label': 'Notes for the AI' })
+  let pack: { name: string; text: string } | undefined
+
+  const show = async () => {
+    const name = notesTemplate
+    if (!name) return
+    const saved = savedNotes(t.notes, name)
+    remove.hidden = !saved
+    pack = undefined
+    const resource = inProject.find((r) => r.name === name)
+    if (resource && state.lk) {
+      try {
+        const content = await templateCache.get(state.lk, resource)
+        pack = builtInPackFor(buildSlots(content.tree), new Synonyms(t.synonyms))
+      } catch {
+        // Without the template, only your own notes can be shown.
+      }
+    }
+    if (notesTemplate !== name) return
+    text.value = saved?.text ?? pack?.text ?? ''
+    status.textContent = saved
+      ? `Your notes for ${name}.${pack ? ` Remove them to use the built-in “${pack.name}” notes again.` : ''}`
+      : pack
+        ? `Using the built-in “${pack.name}” notes. Edit them to make your own.`
+        : `No notes for ${name} yet. Write what its fields mean and how you want them written.`
+  }
+  text.addEventListener('change', () => {
+    if (!notesTemplate) return
+    // Built-in notes left as they are aren't saved as yours.
+    t.notes = withNotes(t.notes, notesTemplate, pack && text.value.trim() === pack.text.trim() ? '' : text.value)
+    void saveSettings(state.settings)
+    void show()
+  })
+  remove.addEventListener('click', () => {
+    if (!notesTemplate) return
+    t.notes = withNotes(t.notes, notesTemplate, '')
+    void saveSettings(state.settings)
+    void show()
+  })
+  const select = el('select', { 'aria-label': 'Template', onchange: (e: Event) => {
+    notesTemplate = (e.target as HTMLSelectElement).value
+    void show()
+  } }, ...names.map((name) => el('option', { value: name, selected: name === notesTemplate },
+    `${name}${savedNotes(t.notes, name) ? ' (your notes)' : ''}${inProject.some((r) => r.name === name) ? '' : ' (not in this project)'}`)))
+  void show()
+  return field('AI notes for templates',
+    el('p', { class: 'muted small' }, 'Used by “Labels then AI writes”: what each field means and how you want it written, e.g. “Initiative: the Dexterity modifier, such as +3”. Keep them short; they share the AI’s space with the clip.'),
+    names.length ? select : el('p', { class: 'muted small' }, 'This project has no templates.'),
+    names.length ? text : null, status, remove)
+}
+
 function templateSettings(): HTMLElement {
   const t = state.settings.templates
   const save = () => void saveSettings(state.settings)
@@ -1159,6 +1246,8 @@ function templateSettings(): HTMLElement {
   } })
   derived.value = t.derived
 
+  const notesEditor = templateNotesEditor()
+
   const rules = project?.rules ?? []
   const rulesList = el('ul', { class: 'settings-list' }, ...rules.map((rule, i) => {
     const loaded = state.template?.id === rule.templateId ? state.template : undefined
@@ -1194,6 +1283,7 @@ function templateSettings(): HTMLElement {
           save()
           derived.value = t.derived
         } }, 'Reset to the defaults')),
+      notesEditor,
       field(`Saved rules${project ? ` in ${project.projectName}` : ''}`,
         rules.length ? rulesList : el('p', { class: 'muted small' }, 'None yet. When you pick a different value for a field on the review screen, you can remember it for that website.')),
     ) : null)

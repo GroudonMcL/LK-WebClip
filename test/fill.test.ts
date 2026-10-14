@@ -11,6 +11,9 @@ import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngi
 import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
 import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillInput, type SavedRule } from '../src/fill/plan.js'
 import { DEFAULT_DERIVED, deriveValue, parseDerived } from '../src/fill/derived.js'
+import { DND5E_STATBLOCK, notesFor, withNotes } from '../src/fill/notes.js'
+import { isWritable, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.js'
+import { OnDeviceEngine } from '../src/fill/engines.js'
 import { withNewDefaults } from '../src/extension/state.js'
 import { blockText, buildSlots, fillTree, forCopy, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
@@ -405,6 +408,12 @@ describe('AI answers checked against the clip (Assassin)', () => {
     assert.match(slotNamed(p, 'Size, Creature Type, Alignment').warning!, /under “Description”, which is a field of its own/)
   })
 
+  it('checks the heading of a copied value that is a whole line, as for a picked line', () => {
+    const id = ids(run({ mode: 'ai' }))
+    const p = run({ mode: 'ai', ai: new Map([[id('Bonus Actions'), { blocks: [], value: 'Medium Humanoid (Any Race), Any Non-Good Alignment' }]]) })
+    assert.match(slotNamed(p, 'Bonus Actions').warning!, /no “Bonus Actions” heading/)
+  })
+
   it('lets you tick a flagged suggestion to use it anyway', () => {
     const id = ids(run())
     const ai = new Map([[id('Legendary Actions'), { blocks: [index('Saving Throws')], value: '' }]])
@@ -517,6 +526,100 @@ describe('labels in the clip', () => {
     const merged = withNewDefaults(saved)
     assert.ok(merged.some((g) => g.includes('Proficiency Bonus')))
     assert.deepEqual(merged.find((g) => g.includes('AC')), ['Armour Class', 'AC'], 'your groups are kept as they are')
+  })
+})
+
+describe('Labels then AI writes', () => {
+  const run = (overrides: Partial<FillInput> = {}) => plan({ mode: 'labels-ai-write', derived: parseDerived(DEFAULT_DERIVED), ...overrides })
+  const id = (label: string) => slotNamed(run(), label).slot.id
+
+  it('uses your notes for a template, or the built-in pack that fits it', () => {
+    const slots = buildSlots(statblock.tree)
+    assert.equal(notesFor('Statblock Template', slots, [], synonyms)?.from, DND5E_STATBLOCK.name)
+    const saved = withNotes([], 'Statblock Template', 'Initiative: +N.')
+    assert.deepEqual(notesFor('statblock template', slots, saved, synonyms), { text: 'Initiative: +N.', from: 'yours' })
+    assert.deepEqual(withNotes(saved, 'Statblock Template', ''), [], 'empty notes are removed')
+    assert.equal(notesFor('God Template', buildSlots(template('God_Template').tree), [], synonyms), undefined, 'the stat block pack doesn’t fit a god')
+  })
+
+  it('lets the AI write short fields only, and gives it the notes', () => {
+    const p = run()
+    const slots = slotsForAi(p, 'labels-ai-write', {})
+    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Resistances', 'Immunities', 'Size, Creature Type, Alignment'])
+    assert.ok(!slots.some((s) => s.label === 'Initiative'), 'a worked-out field isn’t asked about')
+    const job = buildAiJob({ slots, clip: goblin, blockIndexes: p.unusedBlockIndexes, title: 'Goblin', labels: p.blockLabels, write: { notes: DND5E_STATBLOCK.text } })!
+    assert.equal(job.system, WRITE_SYSTEM_PROMPT)
+    assert.match(job.prompt, /Notes about this template:\nA Dungeons & Dragons/)
+    assert.match(job.prompt, /"Size, Creature Type, Alignment" .* — write: a short value/)
+    assert.match(job.prompt, /"Legendary Actions" .* — paragraphs or a section: give block numbers/)
+  })
+
+  it('ticks a written value whose numbers and names are all in the clip', () => {
+    const p = run({ ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [], value: 'Small Humanoid (Goblinoid); alignment Neutral Evil' }]]) })
+    const size = slotNamed(p, 'Size, Creature Type, Alignment')
+    assert.equal(size.origin, 'ai-wrote')
+    assert.equal(size.status, 'filled')
+    assert.equal(size.text, 'Small Humanoid (Goblinoid); alignment Neutral Evil')
+  })
+
+  it('leaves a written value unticked when it adds a number or a name', () => {
+    const p = run({ ai: new Map([
+      [id('Size, Creature Type, Alignment'), { blocks: [], value: 'Large Humanoid (Goblinoid), Neutral Evil' }],
+      [id('Immunities'), { blocks: [], value: 'Poison 12' }],
+    ]) })
+    assert.match(slotNamed(p, 'Size, Creature Type, Alignment').warning!, /“Large”, which isn’t in the clip/)
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').status, 'off')
+    assert.match(slotNamed(p, 'Immunities').warning!, /“12”/)
+  })
+
+  it('keeps the clip’s line when a written value leaves part of it out, and drops placeholder brackets', () => {
+    const p = run({ ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [], value: '[Small] [Humanoid], [Neutral Evil]' }]]) })
+    const size = slotNamed(p, 'Size, Creature Type, Alignment')
+    assert.equal(size.text, 'Small Humanoid (Goblinoid), Neutral Evil')
+    assert.equal(size.origin, 'ai')
+    assert.equal(size.status, 'filled')
+    assert.ok(!text(p.leftovers).includes('Small Humanoid'), 'the line is used, not repeated')
+  })
+
+  it('does not take the notes’ examples as facts (a small model copied the Assassin example for a zombie)', () => {
+    const p = run({ ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [], value: 'Medium Humanoid (Any Race), Any Non-Good Alignment' }]]) })
+    assert.match(slotNamed(p, 'Size, Creature Type, Alignment').warning!, /“Medium”, which isn’t in the clip/)
+  })
+
+  it('still only copies in the other AI modes', () => {
+    const p = plan({ mode: 'labels-ai', ai: new Map([[id('Size, Creature Type, Alignment'), { blocks: [], value: 'Small Humanoid, Neutral Evil' }]]) })
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').origin, 'ai-written')
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').status, 'off')
+  })
+})
+
+describe('on-device engine', () => {
+  it('keeps a session per system prompt and asks each clip in a fresh copy', async () => {
+    const created: string[] = []
+    const asked: { system: string; copy: boolean }[] = []
+    let destroyed = 0
+    const session = (system: string, copy = false): Record<string, unknown> => ({
+      async prompt() { asked.push({ system, copy }); return '{"s1": {"blocks": [], "value": ""}}' },
+      async clone() { return session(system, true) },
+      destroy() { if (copy) destroyed++ },
+    })
+    const g = globalThis as { LanguageModel?: unknown }
+    g.LanguageModel = {
+      availability: async () => 'available',
+      create: async (options: { initialPrompts: { content: string }[] }) => (created.push(options.initialPrompts[0]!.content), session(options.initialPrompts[0]!.content)),
+    }
+    try {
+      const engine = new OnDeviceEngine()
+      const job = buildAiJob({ slots: slotsForAi(plan({ mode: 'labels-ai' }), 'labels-ai', {}), clip: goblin, blockIndexes: [1], title: 'Goblin' })!
+      await engine.run(job)
+      await engine.run(job)
+      await engine.run({ ...job, system: WRITE_SYSTEM_PROMPT })
+      assert.equal(created.length, 2, 'one session per system prompt')
+      assert.ok(asked.every((a) => a.copy), 'every clip is asked in a copy')
+      assert.equal(destroyed, 3, 'and the copy is thrown away')
+    } finally {
+      delete g.LanguageModel
+    }
   })
 })
 

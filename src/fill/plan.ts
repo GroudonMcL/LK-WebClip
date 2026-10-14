@@ -1,5 +1,6 @@
 import type { Block, Run } from '@legendkeeper/sdk/blocks'
 import { extractCandidates, leftoverBlocks, overlaps, type Candidate, type Extraction } from './candidates.js'
+import { isWritable } from './ai.js'
 import { deriveValue, type DerivedRule } from './derived.js'
 import { cleanLabel, compareLabels, LabelMatch, type Synonyms } from './labels.js'
 import { blockText, blocksToRuns, buildSlots, runsText, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
@@ -9,7 +10,14 @@ import { blockText, blocksToRuns, buildSlots, runsText, withNames, type AnyBlock
  * suggestions, then the user's own choices on the review screen, which always win.
  */
 
-export type FillMode = 'labels' | 'ai' | 'labels-ai'
+/**
+ * - labels: label matching only, no AI.
+ * - ai: the AI fills every field, by picking parts of the clip.
+ * - labels-ai: labels first, then the AI picks parts of the clip for what is left.
+ * - labels-ai-write: labels first, then the AI, which may also write short fields in the
+ *   template's style from the clip's facts, guided by notes about the template.
+ */
+export type FillMode = 'labels' | 'ai' | 'labels-ai' | 'labels-ai-write'
 
 /** "On dndbeyond.com, 'Challenge' goes in 'CR' for the Statblock Template." */
 export interface SavedRule {
@@ -39,7 +47,8 @@ export interface AiSuggestion {
   value: string
 }
 
-export type SlotOrigin = 'rule' | 'label' | 'synonym' | 'similar' | 'ai' | 'ai-written' | 'derived' | 'manual' | 'typed' | 'title'
+/** "ai-written": the AI made up a value where it should have copied. "ai-wrote": it wrote one where it may. */
+export type SlotOrigin = 'rule' | 'label' | 'synonym' | 'similar' | 'ai' | 'ai-written' | 'ai-wrote' | 'derived' | 'manual' | 'typed' | 'title'
 
 export interface SlotState {
   slot: Slot
@@ -138,7 +147,10 @@ function plan(input: FillInput): FillPlan {
   const extraction = extractCandidates(input.clip, { knownLabels: knownLabels(slots, input.synonyms, siteRules), vocabulary: input.synonyms.labels() })
   const titleKey = comparable(input.title)
   const blockLabels = labelBlocks(input.clip, extraction, cleanLabel(input.title))
-  const aiCandidates = input.ai ? suggestionsToCandidates(input.ai, input.clip, input.title) : new Map<string, Candidate[]>()
+  const writable = new Set(input.mode === 'labels-ai-write' ? slots.filter(isWritable).map((s) => s.id) : [])
+  const aiCandidates = input.ai ? suggestionsToCandidates(input.ai, input.clip, input.title, writable) : new Map<string, Candidate[]>()
+  // Only the clip states facts. The notes' examples are not facts: a small model copies them.
+  const clipFacts = facts(input.clip.map((b) => blockText(b as AnyBlock)).join('\n'))
   const candidates = [...extraction.candidates, ...[...aiCandidates.values()].flat()]
   const byId = new Map(candidates.map((c) => [c.id, c]))
 
@@ -159,6 +171,27 @@ function plan(input: FillInput): FillPlan {
     return { ...c, blocks, units: [c.units[0]!, ...c.units.slice(1).filter((_, k) => keep[k])], text: blocks.map((b) => blockText(b as AnyBlock)).join('\n') }
   }
   const free = (c: Candidate) => available(c) !== undefined
+  /**
+   * A written value may reformat a line of the clip but not leave part of it out: when every word
+   * of it comes from one short unused line, and that line has more ("Medium Humanoid, Any Non-Good
+   * Alignment" from "Medium Humanoid (Any Race), Any Non-Good Alignment"), the clip's line is used.
+   */
+  const unshortened = (c: Candidate): Candidate => {
+    if (!c.id.endsWith(':wrote')) return c
+    const words = wordsOf(c.text)
+    if (words.size === 0) return c
+    for (const [i, block] of input.clip.entries()) {
+      if (block.kind !== 'paragraph' || overlaps([`b${i}`], used) || (blockLabels.get(i)?.labels.length ?? 0) > 0) continue
+      const line = blockText(block as AnyBlock)
+      if (line.length > 200) continue
+      const lineWords = wordsOf(line)
+      if ([...words].every((w) => lineWords.has(w)) && [...lineWords].some((w) => !words.has(w))) {
+        return { ...c, id: c.id.replace(/:wrote$/, ':value'), blocks: [block], runs: (block as AnyBlock).content as Run[], text: line, units: [`b${i}`], found: [i] }
+      }
+    }
+    return c
+  }
+
   /**
    * The AI decides where content goes; the clip's own labels decide what the value is. When the
    * AI picks a labelled line or a section for a field with that label ("Armor Class 15 (studded
@@ -265,15 +298,17 @@ function plan(input: FillInput): FillPlan {
       // clip agrees with wins ("[10]" is the CON label, "16 (+3)" is Dexterity's value).
       let pick: { candidate: Candidate; verified: boolean; warning?: string } | undefined
       for (const suggested of aiCandidates.get(slot.id) ?? []) {
-        const candidate = snapped(slot, copiedFrom(slot, suggested))
+        const candidate = snapped(slot, copiedFrom(slot, unshortened(suggested)))
         if (!free(candidate) || !aiFits(slot, candidate)) continue
         // A section answered with typed-out text rather than block numbers is not trusted either.
-        const verified = !candidate.id.endsWith(':written') && !(slot.kind === 'rich' && candidate.units.length === 0)
-        const warning = verified ? aiWarning(slot, candidate, { blockLabels, synonyms: input.synonyms, rules: siteRules, slots: fillable }) : undefined
+        const wrote = candidate.id.endsWith(':wrote')
+        const verified = wrote || (!candidate.id.endsWith(':written') && !(slot.kind === 'rich' && candidate.units.length === 0))
+        const ownWords = facts(`${slot.label} ${slot.placeholder}`)
+        const warning = !verified ? undefined : (wrote ? checkWritten(candidate.text, clipFacts, ownWords) : undefined) ?? aiWarning(slot, candidate, { blockLabels, synonyms: input.synonyms, rules: siteRules, slots: fillable })
         if (!pick || (verified && !warning && (!pick.verified || pick.warning))) pick = { candidate, verified, warning }
       }
       if (!pick) continue
-      assign(slot, pick.candidate, pick.verified ? 'ai' : 'ai-written')
+      assign(slot, pick.candidate, pick.candidate.id.endsWith(':wrote') ? 'ai-wrote' : pick.verified ? 'ai' : 'ai-written')
       const state = states.get(slot.id)!
       state.options.unshift(pick.candidate)
       state.warning = pick.warning
@@ -305,7 +340,7 @@ function plan(input: FillInput): FillPlan {
     for (const slot of fillable) {
       const state = states.get(slot.id)!
       // An AI answer left unticked (made up, or at odds with the clip) gives way to a worked-out value.
-      const open = state.status === 'empty' || (state.status === 'off' && (state.origin === 'ai-written' || state.warning !== undefined) && input.overrides[slot.id]?.off === undefined)
+      const open = state.status === 'empty' || (state.status === 'off' && (state.origin === 'ai-written' || state.origin === 'ai-wrote' || state.warning !== undefined) && input.overrides[slot.id]?.off === undefined)
       if (slot.kind !== 'text' || !open || input.overrides[slot.id]?.choice || compareLabels(slot.key, targetKey, input.synonyms) === undefined) continue
       const candidate = { ...typedCandidate(slot, value), id: `derived:${slot.id}`, label: `From ${source.slot.label}` }
       const off = input.overrides[slot.id]?.off === true
@@ -410,15 +445,17 @@ function aiWarning(slot: Slot, candidate: Candidate, { blockLabels, synonyms, ru
   const labelled = chosen ? indexes : indexes.filter((i) => (blockLabels.get(i)?.labels.length ?? 0) > 0)
   const wrong = chosen ? labelled.map(wrongLabel).find(Boolean) : labelled.length > 0 && labelled.every((i) => wrongLabel(i)) ? wrongLabel(labelled[0]!) : undefined
   if (wrong) return `The clip labels this “${wrong}”, not “${slot.label}”.`
-  if (slot.titled && chosen) {
-    const under = indexes.map((i) => blockLabels.get(i)?.under)
+  // Where it lands in the clip: the blocks picked, or the whole block a copied value turned out to be.
+  const placed = [...new Set(candidate.units.map(blockOf).filter((i) => i !== undefined))]
+  if (slot.titled && placed.length > 0) {
+    const under = placed.map((i) => blockLabels.get(i)?.under)
     const other = under.find((u) => u && !fitsLabel(u))
     if (other) return `In the clip this is under “${other}”, not “${slot.label}”.`
     // Content under no heading, in a clip that has headings: had the clip a section like this, it would be under it.
     const clipHasSections = [...blockLabels.values()].some((b) => b.under)
     if (clipHasSections && under.some((u) => !u)) return `The clip has no “${slot.label}” heading for this.`
-  } else if (chosen) {
-    const other = indexes.map((i) => blockLabels.get(i)?.under).find((u) => u && !fitsLabel(u) && slots.some((s) => s !== slot && compareLabels(s.key, cleanLabel(u), synonyms) !== undefined))
+  } else if (placed.length > 0) {
+    const other = placed.map((i) => blockLabels.get(i)?.under).find((u) => u && !fitsLabel(u) && slots.some((s) => s !== slot && compareLabels(s.key, cleanLabel(u), synonyms) !== undefined))
     if (other) return `In the clip this is under “${other}”, which is a field of its own.`
   }
   if (slot.kind === 'text' && (candidate.text.length > 200 || candidate.text.trim().includes('\n'))) return 'Too long for a one-line field.'
@@ -468,7 +505,7 @@ export function comparable(text: string): string {
  * and images survive. A short value must appear in the clip; if it doesn't, it is marked as written
  * by the AI (the id ends in ":written") and needs a tick.
  */
-export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Block[], title = ''): Map<string, Candidate[]> {
+export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Block[], title = '', writable: Set<string> = new Set()): Map<string, Candidate[]> {
   const out = new Map<string, Candidate[]>()
   const clipText = comparable(clip.map((b) => blockText(b as AnyBlock)).join('\n'))
   const titleKey = comparable(title)
@@ -491,7 +528,9 @@ export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Blo
         units: numbers.map((n) => `b${n}`),
       })
     }
-    const lines = suggestion.value.trim().split(/\n+/)
+    // Square brackets only mark a template's placeholders; a written value never needs them.
+    const raw = writable.has(slotId) ? suggestion.value.replace(/\[([^\]]*)\]/g, '$1') : suggestion.value
+    const lines = raw.trim().split(/\n+/)
     while (lines.length > 0 && titleKey && comparable(lines[0]!) === titleKey) lines.shift()
     const value = lines.join('\n').trim()
     if (!value) continue
@@ -500,7 +539,8 @@ export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Blo
     const whole = clip.findIndex((b) => comparable(blockText(b as AnyBlock)) === comparable(value))
     const found = clip.map((b, i) => (comparable(blockText(b as AnyBlock)).includes(comparable(value)) ? i : -1)).filter((i) => i >= 0)
     options.push({
-      id: verified ? `ai:${slotId}:value` : `ai:${slotId}:written`,
+      // Not in the clip: written, where the mode allows it; made up, where it should have been copied.
+      id: verified ? `ai:${slotId}:value` : writable.has(slotId) ? `ai:${slotId}:wrote` : `ai:${slotId}:written`,
       label: 'AI',
       key: '',
       kind: 'pair',
@@ -512,6 +552,42 @@ export function suggestionsToCandidates(ai: Map<string, AiSuggestion>, clip: Blo
     })
   }
   return out
+}
+
+function wordsOf(text: string): Set<string> {
+  return new Set((text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []))
+}
+
+/** The numbers and words in a text, for checking a written value against the clip. */
+interface Facts {
+  numbers: Set<string>
+  words: Set<string>
+}
+
+function facts(text: string): Facts {
+  const plain = text.normalize('NFKC').replace(/(\d),(\d{3})\b/g, '$1$2')
+  return {
+    numbers: new Set(plain.match(/\d+(?:[./]\d+)?/g) ?? []),
+    words: new Set((plain.toLowerCase().match(/\p{L}[\p{L}'’-]*/gu) ?? []).map((w) => w.replace(/’/g, "'"))),
+  }
+}
+
+/**
+ * A value the AI wrote may reword the clip, but not add to it: every number in it must be in the
+ * clip, and every capitalised word (a name, a type, a place) must be in the clip or the field's own
+ * label and placeholder. Lowercase linking words ("and", "or") are free.
+ */
+function checkWritten(value: string, clip: Facts, own: Facts): string | undefined {
+  const { numbers } = facts(value)
+  const number = [...numbers].find((n) => !clip.numbers.has(n) && !own.numbers.has(n))
+  if (number) return `The AI wrote “${number}”, which isn’t in the clip.`
+  const capitalised = value.normalize('NFKC').match(/\p{Lu}[\p{L}'’-]*/gu) ?? []
+  const word = capitalised.find((w) => {
+    const key = w.toLowerCase().replace(/’/g, "'")
+    return !clip.words.has(key) && !own.words.has(key)
+  })
+  if (word) return `The AI wrote “${word}”, which isn’t in the clip.`
+  return undefined
 }
 
 /** A block without a first line that is only the page's name; undefined when nothing else is left. */

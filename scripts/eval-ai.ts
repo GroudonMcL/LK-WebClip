@@ -6,6 +6,7 @@
  *   npm run eval:ai                        # every case once, with the first free OpenRouter model
  *   npm run eval:ai -- --runs 3            # each case three times (free models vary between runs)
  *   npm run eval:ai -- --model some/model:free
+ *   npm run eval:ai -- --modes labels-ai,labels-ai-write
  *
  * For each field the final state is compared with what a careful person would put there:
  *   - right:    the expected value, ticked; or nothing, when nothing belongs there;
@@ -30,9 +31,10 @@ import { DEFAULT_DERIVED, parseDerived } from '../src/fill/derived.js'
 import { listFreeModels, OpenRouterEngine, suggest } from '../src/fill/engines.js'
 import { DEFAULT_SYNONYMS, Synonyms } from '../src/fill/labels.js'
 import { blocksForAi, comparable, planFill, type FillMode, type FillPlan } from '../src/fill/plan.js'
-import type { TemplateTree } from '../src/fill/template.js'
+import { notesFor } from '../src/fill/notes.js'
+import { buildSlots, type TemplateTree } from '../src/fill/template.js'
 
-const { values: args } = parseArgs({ options: { runs: { type: 'string', default: '1' }, model: { type: 'string' }, verbose: { type: 'boolean', default: false } } })
+const { values: args } = parseArgs({ options: { runs: { type: 'string', default: '1' }, model: { type: 'string' }, verbose: { type: 'boolean', default: false }, modes: { type: 'string' } } })
 const apiKey = process.env.OPENROUTER_API_KEY?.trim()
 if (!apiKey) throw new Error('Set OPENROUTER_API_KEY (free models only are used).')
 
@@ -56,7 +58,7 @@ const CASES: Case[] = [
     fixture: 'dndbeyond-goblin.html',
     template: 'Statblock_Template',
     title: 'Goblin',
-    modes: ['labels-ai', 'ai'],
+    modes: ['labels-ai', 'labels-ai-write', 'ai'],
     expected: {
       'Armour Class': '15 (leather armor, shield)', Initiative: '+2', 'Hit Points': '7 (2d6)', Speed: '30 ft.',
       Strength: '8 (-1)', Dexterity: '14 (+2)', Constitution: '10 (+0)', Intelligence: '10 (+0)', Wisdom: '8 (-1)', Charisma: '8 (-1)',
@@ -72,7 +74,7 @@ const CASES: Case[] = [
     fixture: 'dndbeyond-assassin.html',
     template: 'Statblock_Template',
     title: 'Assassin',
-    modes: ['labels-ai', 'ai'],
+    modes: ['labels-ai', 'labels-ai-write', 'ai'],
     expected: {
       'Armour Class': '15 (studded leather)', Initiative: '+3', 'Hit Points': '78 (12d8 + 24)', Speed: '30 ft.',
       Strength: '11 (+0)', Dexterity: '16 (+3)', Constitution: '14 (+2)', Intelligence: '13 (+1)', Wisdom: '11 (+0)', Charisma: '10 (+0)',
@@ -81,11 +83,29 @@ const CASES: Case[] = [
       Traits: /^Assassinate[\s\S]*Sneak Attack/, Actions: /^Multiattack[\s\S]*Light Crossbow/, Description: /^Trained in the use of poison/, ...STATBLOCK_EMPTY,
     },
   },
+  {
+    // A fan-wiki layout: bold labels, lowercase values, an ability table, damage and condition
+    // immunities on separate lines, and a trait with no "Traits" heading.
+    name: 'Zombie',
+    fixture: 'wiki-zombie.html',
+    template: 'Statblock_Template',
+    title: 'Zombie',
+    modes: ['labels-ai', 'labels-ai-write', 'ai'],
+    expected: {
+      'Armour Class': '8', Initiative: '-2', 'Hit Points': '22 (3d8 + 9)', Speed: '20 ft.',
+      Strength: '13 (+1)', Dexterity: '6 (−2)', Constitution: '16 (+3)', Intelligence: '3 (−4)', Wisdom: '6 (−2)', Charisma: '5 (−3)',
+      Skills: null, Resistances: null, Immunities: /^poison\b/i, Senses: 'darkvision 60 ft., passive Perception 8',
+      Languages: "understands the languages it knew in life but can't speak", 'Challenge Rating': '1/4 (50 XP)',
+      'Size, Creature Type, Alignment': 'Medium undead, neutral evil', Actions: /^Slam\./, Description: null,
+      'Bonus Actions': null, 'Legendary Actions': null,
+    },
+  },
 ]
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
 const synonyms = new Synonyms(DEFAULT_SYNONYMS)
 const derived = parseDerived(DEFAULT_DERIVED)
+const onlyModes = args.modes?.split(',') as FillMode[] | undefined
 const fixture = (name: string) => readFileSync(new URL(`../test/fixtures/${name}`, import.meta.url), 'utf8')
 const template = (name: string): { id: string; tree: TemplateTree } => {
   const t = JSON.parse(fixture(`templates/${name}.json`))
@@ -103,14 +123,15 @@ for (let run = 1; run <= Number(args.runs); run++) {
   for (const c of CASES) {
     const clip: Block[] = htmlStringToBlocks(fixture(c.fixture), parser, { baseUrl: 'https://www.dndbeyond.com/' }).blocks
     const { id, tree } = template(c.template)
-    for (const mode of c.modes) {
+    for (const mode of c.modes.filter((m) => !onlyModes || onlyModes.includes(m))) {
+      const templateNotes = mode === 'labels-ai-write' ? notesFor(c.template.replace(/_/g, ' '), buildSlots(tree), [], synonyms)?.text : undefined
       const base = { tree, templateId: id, clip, title: c.title, site: 'eval', synonyms, rules: [], mode, overrides: {}, derived }
       const first = planFill(base)
       const slots = slotsForAi(first, mode, {})
       const started = Date.now()
       let plan: FillPlan = first
       try {
-        const result = await suggest(engine, { slots, clip, blockIndexes: blocksForAi(first, slots, mode, clip.length, synonyms), title: c.title, labels: first.blockLabels })
+        const result = await suggest(engine, { slots, clip, blockIndexes: blocksForAi(first, slots, mode, clip.length, synonyms), title: c.title, labels: first.blockLabels, write: mode === 'labels-ai-write' ? { notes: templateNotes } : undefined })
         plan = planFill({ ...base, ai: result.suggestions })
         if (args.verbose) console.log(`${result.job?.prompt}\n\nAnswer: ${result.raw}\n`)
       } catch (error) {
@@ -124,8 +145,10 @@ for (let run = 1; run <= Number(args.runs); run++) {
         const state = plan.slots.find((s) => s.slot.label === label)
         if (!state) throw new Error(`${c.template} has no field "${label}"`)
         const value = state.text.replace(/\s+/g, ' ').trim()
-        const matches = expected === null ? false : typeof expected === 'string' ? comparable(value) === comparable(expected) : expected.test(state.text)
-        const ai = state.origin === 'ai' || state.origin === 'ai-written'
+        // The same words in another case or punctuation are the same value ("Medium, Undead, Neutral Evil").
+        const words = (text: string) => comparable(text).replace(/[−–]/g, '-').match(/[\p{L}\p{N}+-]+/gu)?.join(' ') ?? ''
+        const matches = expected === null ? false : typeof expected === 'string' ? words(value) === words(expected) : expected.test(state.text)
+        const ai = state.origin === 'ai' || state.origin === 'ai-written' || state.origin === 'ai-wrote'
         let verdict: keyof typeof score
         if (state.status === 'filled') verdict = matches ? 'right' : 'wrong'
         // A correct AI value left unticked counts as missed: the checks were too strict there.

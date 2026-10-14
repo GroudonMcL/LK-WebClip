@@ -34,6 +34,32 @@ export const SYSTEM_PROMPT = [
   'Answer only with JSON in the requested shape.',
 ].join(' ')
 
+/**
+ * For "Labels then AI writes": the same rules, but short fields may be written in the template's
+ * style from the clip's facts. Every number and name in a written value is checked against the
+ * clip before it is ticked (see checkWritten in plan.ts).
+ */
+export const WRITE_SYSTEM_PROMPT = [
+  'You fill in a template in a LegendKeeper wiki from content clipped from a web page.',
+  'For fields marked "write", write a short value in the style the template and the notes ask for, using only facts stated in the clip: you may reword, reorder, combine and reformat them, and work out simple values the notes explain (such as a modifier), but never add a fact, number or name the clip does not have.',
+  'For other fields, give the numbers of the clip blocks that belong in them; never write those.',
+  'Each block can go in at most one field.',
+  'A block marked as labelled (for example labelled "Saving Throws") belongs only in a field with that label or one meaning the same.',
+  'A field that is a heading in the template (for example "Legendary Actions") takes only blocks under a heading with the same meaning in the clip.',
+  'Never put the page name in a field.',
+  'Most clips have nothing for some fields. If the clip has nothing for a field, answer with no blocks and an empty value. Never guess.',
+  'Answer only with JSON in the requested shape.',
+].join(' ')
+
+/**
+ * Fields the AI may write in "Labels then AI writes": one-line rows, and short text fields named by
+ * their placeholder ("Size, Creature Type, Alignment"). Sections, titled fields and placeholders
+ * standing for paragraphs keep the clip's own blocks, with their links and formatting.
+ */
+export function isWritable(slot: Slot): boolean {
+  return slot.kind === 'text' || (slot.kind === 'rich' && slot.target.type === 'field' && !slot.titled)
+}
+
 const KIND_TEXT: Record<string, string> = {
   text: 'one line of text: copy a short value',
   rich: 'paragraphs or a section: give block numbers',
@@ -46,6 +72,8 @@ export function slotsForAi(plan: FillPlan, mode: FillMode, overrides: Record<str
     .filter((s) => ['text', 'rich', 'image'].includes(s.slot.kind))
     .filter((s) => !overrides[s.slot.id]?.choice)
     .filter((s) => (mode === 'ai' ? true : s.status === 'empty'))
+    // A field a rule works out (Initiative from Dexterity) needs no AI.
+    .filter((s) => s.origin !== 'derived')
     .map((s) => s.slot)
 }
 
@@ -58,14 +86,19 @@ export interface AiInput {
   nameOf?: (resourceId: string) => string | undefined
   /** What the clip says about each block (FillPlan.blockLabels), shown to the model with the block. */
   labels?: Map<number, BlockLabels>
+  /** "Labels then AI writes": short fields may be written, guided by these notes about the template. */
+  write?: { notes?: string }
 }
 
 export function buildAiJob(input: AiInput, limits: { maxChars?: number; maxBlockChars?: number } = {}): AiJob | undefined {
   return withNames(input.nameOf, () => job(input, limits))
 }
 
-function job({ slots, clip, blockIndexes, title, labels }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
+function job({ slots, clip, blockIndexes, title, labels, write }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
   if (slots.length === 0 || blockIndexes.length === 0) return undefined
+  // The notes share the model's window with the clip.
+  const notes = write?.notes?.trim() ?? ''
+  maxChars = Math.max(1000, maxChars - notes.length)
   const blocks = new Map<number, number>()
   const lines: string[] = []
   let used = 0
@@ -101,7 +134,8 @@ function job({ slots, clip, blockIndexes, title, labels }: AiInput, { maxChars =
     slotKeys.set(key, slot.id)
     const example = slot.placeholder && slot.kind !== 'image' ? ` Template example: "${slot.placeholder.replace(/\s+/g, ' ').slice(0, 120)}"` : ''
     const heading = slot.titled ? ' A heading in the template.' : ''
-    return `${key}: "${slot.label}" (${slot.path}) — ${KIND_TEXT[slot.kind] ?? 'text'}.${heading}${example}`
+    const kind = write && isWritable(slot) ? 'write: a short value from the clip\'s facts, in the template\'s style' : KIND_TEXT[slot.kind] ?? 'text'
+    return `${key}: "${slot.label}" (${slot.path}) — ${kind}.${heading}${example}`
   })
 
   const entry = { type: 'object', properties: { blocks: { type: 'array', items: { type: 'integer' } }, value: { type: 'string' } }, required: ['blocks', 'value'], additionalProperties: false }
@@ -110,6 +144,7 @@ function job({ slots, clip, blockIndexes, title, labels }: AiInput, { maxChars =
   const prompt = [
     `Page name: ${title}`,
     '',
+    ...(notes ? ['Notes about this template:', notes, ''] : []),
     'Clip blocks:',
     ...lines,
     '',
@@ -118,7 +153,7 @@ function job({ slots, clip, blockIndexes, title, labels }: AiInput, { maxChars =
     '',
     `Answer with JSON like ${example}, with an entry for every field.`,
   ].join('\n')
-  return { system: SYSTEM_PROMPT, prompt, schema, slots: slotKeys, blocks, truncated }
+  return { system: write ? WRITE_SYSTEM_PROMPT : SYSTEM_PROMPT, prompt, schema, slots: slotKeys, blocks, truncated }
 }
 
 export class AiAnswerError extends Error {

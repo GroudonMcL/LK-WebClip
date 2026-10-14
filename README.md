@@ -73,6 +73,20 @@ The AI never writes LegendKeeper content. It only says which parts of the clip g
 - the clip labels it for something else ("Saving Throws DEX +6" offered as Legendary Actions);
 - it sits under a different heading, or under a heading that names another field.
 
+**Fill with** offers four choices:
+
+| Choice | What it does |
+| --- | --- |
+| **Labels** | Label matching only; no AI. |
+| **AI** | The AI picks parts of the clip for every field. |
+| **Labels then AI** | Labels first, then the AI picks parts of the clip for the fields left. |
+| **Labels then AI writes** | Labels first, then the AI fills the fields left and may *write* short fields, reformatting, combining and working out values. |
+
+In **Labels then AI writes**:
+- **Notes:** the AI is guided by notes about the template: a built-in D&D 5e stat block pack, or your own, which you can write per template in **Settings → Templates → AI notes for templates**.
+- **What it can't write:** long sections (Traits, Actions, Description…) still take the clip's own paragraphs.
+- **Checks on written values:** a written value is ticked only when every number and name in it is in the clip. It must also not leave out part of the clip line it rewrites; if it does, the clip's line is used instead.
+
 The page name is never put in a field. Fields the clip doesn't state but another field decides, such as Initiative from the Dexterity modifier, are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
 
 ## Where your API key is kept
