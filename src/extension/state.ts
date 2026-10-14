@@ -1,5 +1,5 @@
 import type { Capture } from '../clip/importClip.js'
-import { DEFAULT_DERIVED } from '../fill/derived.js'
+import { DEFAULT_DERIVED, OLD_DEFAULT_DERIVED } from '../fill/derived.js'
 import { DEFAULT_SYNONYMS, SYNONYMS_VERSION } from '../fill/labels.js'
 import type { TemplateNotes } from '../fill/notes.js'
 import type { FillMode, SavedRule } from '../fill/plan.js'
@@ -38,10 +38,12 @@ export interface TemplateSettings {
   synonyms: string[][]
   /** Which version of the default synonyms the list has seen, so new defaults can be added once. */
   synonymsVersion: number
-  /** Worked-out fields, one rule per line ("Initiative = Dexterity modifier"). */
+  /** Worked-out fields, one rule per line ("Initiative = {Dexterity modifier} ({10 + Dexterity modifier})"). */
   derived: string
-  /** Your notes for the AI about each template, for "Labels then AI writes". */
+  /** Your notes for the AI about each template. */
   notes: TemplateNotes[]
+  /** Tag pages filled from a stat block template with the creature's size, type, alignment and CR. */
+  tagStatblocks: boolean
   openRouterKey: string
   /** A free model id (ending in ":free"). */
   openRouterModel: string
@@ -59,6 +61,7 @@ export const DEFAULT_TEMPLATE_SETTINGS: TemplateSettings = {
   synonymsVersion: SYNONYMS_VERSION,
   derived: DEFAULT_DERIVED,
   notes: [],
+  tagStatblocks: true,
   openRouterKey: '',
   openRouterModel: '',
   openRouterWarned: false,
@@ -73,6 +76,8 @@ export interface Settings {
   linkText: boolean
   /** Match names with their exact capitalisation. */
   matchCase: boolean
+  /** Link only text written exactly as a page's name, so the clip's words are kept. */
+  exactNames: boolean
   /** Link only the first mention of each page in a clip. */
   firstOnly: boolean
   images: boolean
@@ -87,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
   linkify: true,
   linkText: true,
   matchCase: true,
+  exactNames: true,
   firstOnly: true,
   images: true,
   assetFolder: 'LK Web Clipper',
@@ -127,6 +133,7 @@ export async function loadSettings(): Promise<Settings> {
     templates.synonyms = withNewDefaults(templates.synonyms)
     templates.synonymsVersion = SYNONYMS_VERSION
   }
+  templates.derived = withNewDerived(templates.derived)
   return { ...DEFAULT_SETTINGS, ...stored, templates }
 }
 
@@ -137,6 +144,11 @@ export async function loadSettings(): Promise<Settings> {
 export function withNewDefaults(groups: string[][]): string[][] {
   const known = new Set(groups.flat().map((label) => label.toLowerCase()))
   return [...groups, ...DEFAULT_SYNONYMS.filter((group) => !group.some((label) => known.has(label.toLowerCase())))]
+}
+
+/** Replaces an earlier default worked-out rule, left unchanged in saved settings, with the current one. */
+export function withNewDerived(text: string): string {
+  return text.split('\n').map((line) => (OLD_DEFAULT_DERIVED.includes(line.trim()) ? DEFAULT_DERIVED : line)).join('\n')
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

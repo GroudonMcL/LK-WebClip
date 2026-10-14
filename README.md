@@ -40,7 +40,9 @@ Then in the panel:
   - **Fill with**: **Labels** finds the template’s labels in the clip (“Armor Class 15”, a “Traits” heading, “STR / 8 (-1)”, table rows, “Label: value”), using synonyms such as AC = Armour Class. **AI** asks a language model to pick the parts of the clip for each field. **Labels then AI** asks the AI only about what labels left empty.
   - The **Template fields** list shows each field, its value and where it came from (Label, Synonym, Saved rule, AI…). Untick a value to leave it out, or **Change** it to another part of the clip or a typed value. A field that several labels fit is never guessed. When you pick a value yourself, you can **Remember** it for that website; saved rules are listed in Settings.
   - **Keep unfilled template fields**: on keeps the template’s placeholder text where nothing was found; off removes those fields.
-  - Anything in the clip that didn’t go in a field is added at the end. If the template has its own “From [Source]” heading, the credit and the rest of the clip go there.
+  - The “From <Source>” credit goes at the top of the new page, or at the top of what is added to a page. If the template has its own “From [Source]” heading, the credit goes there instead.
+  - Anything in the clip that didn’t go in a field is added at the end, after a divider (or under the template’s own “From [Source]” heading, when only placeholder text sits under it).
+  - **Tags to add** (stat block templates): the creature’s size, type, alignment and challenge rating become tags, e.g. Medium, Humanoid, Any Non-Good Alignment and CR 8. Words in brackets and “Typically” are left out, and a tag your project already has keeps its spelling. Edit or clear them before importing; **Settings → Templates → Tag stat block pages** turns this off.
 - **Source:**
   - **Add a “From <Source>” heading** credits the clip with a heading linking to its Source page. Untick it to clip without a credit (and without a Source).
   - **This website** uses the site's own name (e.g. "D&D Beyond"). If a Source with that name already exists, you choose between reusing it and creating another.
@@ -48,15 +50,16 @@ Then in the panel:
   - **New Source** creates one with the name you give it.
 
   Each new Source page gets a Backlinks collection, so it lists every page that cites it.
-- **Turn web links into page links:** a link whose text names one of your pages (by name or alias, including plurals like “Red Dragons” and possessives like “Greyhawk’s”) becomes a LegendKeeper link to that page.
-- **Link page names in the text:** names and aliases of your pages written in the clip become LegendKeeper links. It matches whole words only, and the longest name wins, so “Red Dragon” beats “Dragon”. Headings, code and existing links are left alone. By default capitalisation must match, as your aliases suggest LegendKeeper's own auto-linker does: a page named “King” links “King” but not “king”. Add aliases in LegendKeeper for other spellings and plurals.
+- **Turn web links into page links:** a link whose text is the name of one of your pages becomes a LegendKeeper link to that page.
+- **Link page names in the text:** names of your pages written in the clip become LegendKeeper links. It matches whole words only, and the longest name wins, so “Red Dragon” beats “Dragon”. Headings, code and existing links are left alone.
+- **Only exact page names** are linked by default, because LegendKeeper shows a page link as the page’s name: linking “attack roll” to the page “Attack Rolls” would change the clip’s words. So “attack roll”, “attack rolls” and an alias like “Weapon Attack” stay as written, and only “Attack Rolls” becomes a link. Untick **Settings → Linking → Link only exact page names** to link aliases, plurals (“Red Dragons”), possessives and, if you also untick case matching, other capitalisations, accepting that LegendKeeper will show them as the page’s name.
 - **Links to your pages** lists every proposed link before you import. Untick any you don't want. When a name fits several pages, such as an alias shared by two NPCs, it is left unlinked and shown first, with a menu to pick the right page.
 - **Import images:** copies each image into your project's asset library (folder "LK Web Clipper"). If an image can't be copied, the clip keeps a link to it instead.
 - Check the **Preview** and click **Create page** or **Add to page**. When you add to a page, the clip goes at the end after a divider. Your existing content is never overwritten: if someone edits the page at the same moment, the clipper re-reads it and tries again.
 
 The panel remembers your last destination and Source for each project, so repeated clipping is a right-click and one click.
 
-In **Settings → Linking** you can turn off case matching, and choose whether only the first mention of each page in a clip is linked (the default) or every mention.
+In **Settings → Linking** you can link aliases and other wordings too (see above), and choose whether only the first mention of each page in a clip is linked (the default) or every mention.
 
 The page list refreshes itself: when the panel opens or comes back into view after 10 minutes, every 10 minutes while it is open, and when a search turns up a page the list doesn't have. ⟳ refreshes it immediately, and a refresh never resets what you have filled in.
 
@@ -82,12 +85,17 @@ The AI never writes LegendKeeper content. It only says which parts of the clip g
 | **Labels then AI** | Labels first, then the AI picks parts of the clip for the fields left. |
 | **Labels then AI writes** | Labels first, then the AI fills the fields left and may *write* short fields, reformatting, combining and working out values. |
 
+**Notes about each template** guide the AI in every AI mode. Built-in notes cover the kinds of template in the test project: D&D 5e stat blocks, spells, magic items, classes and subclasses, deities, realms, places and characters. A template uses the first built-in notes that fit its fields (or, failing that, its name). In **Settings → Templates → AI notes for templates** you can:
+- edit any template’s notes into your own, or write notes for a template with none; **Remove your notes** goes back to the built-in ones;
+- click **Suggest notes with AI**: the AI drafts notes from the template’s fields, its notes so far and the clip open in the panel as an example. The draft is shown for you to check and edit, and saved only when you click **Save these notes**.
+
+When the AI only picks (AI, Labels then AI), it is told to copy values exactly as the clip has them, so the notes tell it where things go rather than how to rewrite them.
+
 In **Labels then AI writes**:
-- **Notes:** the AI is guided by notes about the template: a built-in D&D 5e stat block pack, or your own, which you can write per template in **Settings → Templates → AI notes for templates**.
 - **What it can't write:** long sections (Traits, Actions, Description…) still take the clip's own paragraphs.
 - **Checks on written values:** a written value is ticked only when every number and name in it is in the clip. It must also not leave out part of the clip line it rewrites; if it does, the clip's line is used instead.
 
-The page name is never put in a field. Fields the clip doesn't state but another field decides, such as Initiative from the Dexterity modifier, are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
+The page name is never put in a field. Fields the clip doesn't state but other fields decide are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. The default writes Initiative as the Dexterity modifier and, in brackets, 10 plus it: Dexterity 12 (+1) gives “+1 (11)”. A rule also completes a value the clip only starts (“Initiative +1” becomes “+1 (11)”). See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
 
 ## Where your API key is kept
 
@@ -106,7 +114,7 @@ npm run build             # the extension, into dist/extension (add -- --zip for
 npm run e2e               # loads the built extension in Chromium and clips into your project
 npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
 npm run phase4:templates  # fills the project's Statblock and God templates from real clips (AI cases need OPENROUTER_API_KEY)
-npm run eval:ai           # scores the AI's fills of saved clips: right, missed, caught by the checks, wrong (needs OPENROUTER_API_KEY)
+npm run eval:ai           # scores the AI's fills of saved clips: right, missed, caught by the checks, wrong (needs OPENROUTER_API_KEY; --no-notes to compare without the template notes)
 npm run poc               # the Phase 1 API proof of concept
 ```
 

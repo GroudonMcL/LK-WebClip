@@ -55,10 +55,10 @@ Everything is off until you tick **Settings → Templates → Enable template fi
      4. Fill each page tab with one `replaceBlocks`, guarded by the version just read.
      5. Update sidebar properties with their own calls.
      - If filling fails after the page was made, the panel says **Page created, but filling failed** and offers **Try filling again** or **Delete the new page**. It never makes a second copy.
-   - **Add to a page:** a divider, the filled main tab, then the credit and unused content, written in one guarded write like any append.
+   - **Add to a page:** a divider, the credit, the filled main tab, then the unused content, written in one guarded write like any append.
    - **The credit and unused content:**
-     - They go at the end of the main tab, after a divider.
-     - If the template has its own “From [Source]” heading with only placeholder text under it (your God Template), they go there instead, so the credit isn’t doubled.
+     - The credit goes at the top of the main tab (0.5.0; it used to go at the end). The unused content goes at the end, after a divider.
+     - If the template has its own “From [Source]” heading (your God and Location templates), the credit goes there instead, so it isn’t doubled; the unused content goes under it too when only placeholder text sits under it.
      - The clip’s own name line (“Goblin”) is dropped, since it only repeats the page name.
 
 ## Keeping the AI honest
@@ -151,6 +151,55 @@ All the earlier checks (labels, headings, page name) still apply. On Chrome's bu
 
 On the small model, writing first made 3 wrong fills, then 2, before the rules above were added; each rule came from one of those mistakes. Gemini Nano itself can still only be tested in your Chrome.
 
+## Changes in 0.5.0
+
+**Initiative as “+1 (11)”.** Worked-out rules can now combine fields and text: the default is `Initiative = {Dexterity modifier} ({10 + Dexterity modifier})`. In braces go a field’s name and the part to take (`modifier`, `number`, or nothing for the whole value), and `10 + …` adds to it. A rule also completes a value the clip only starts: “Initiative +1” becomes “+1 (11)”, and the clip’s line still counts as used. Saved settings still holding the old default rule are updated; a rule you changed is left alone.
+
+**The credit at the top.** See *Writing* above.
+
+**Stat block tags.** For a template the stat block notes fit, the review screen shows **Tags to add**:
+- **Where they come from:** the filled “Size, Creature Type, Alignment” line and Challenge Rating. For example “Small Fey (Goblinoid), Typically Chaotic Neutral” and “1/4 (50 XP)” give Small, Fey, Chaotic Neutral and CR 1/4.
+- **What is left out:** words in brackets and “Typically”. A size pair (“Medium or Small”) gives both sizes.
+- **Spelling:** words are capitalised, but a tag the project already has keeps its spelling, because LegendKeeper tags match exactly.
+- **Where they go:** they are added to the template’s tags on a new page, or to the page’s tags on an append.
+- **Changing them:** edit or clear them on the review screen, or turn the feature off in **Settings → Templates**.
+
+**Links keep the clip’s words.** Pages the clipper wrote kept the clip’s wording in each link: LegendKeeper’s API stores and returns it. Your Aartuk Elder and Assassin pages, though, showed each link in the page text as the page’s name: “advantage on attack rolls” became “Advantage and Disadvantage on Attack Rolls”. Links in the infobox kept their wording (“Climb” for Climbing).
+
+So by default the clipper now links only text written exactly as a page’s name, capitals included:
+- “Attack Rolls” is linked;
+- “attack roll”, “attack rolls” and the alias “Weapon Attack” stay plain text;
+- a web link whose text isn’t an exact name stays a web link.
+
+**Settings → Linking → Link only exact page names** turns this off, and brings back alias, plural and (with case matching off) any-case linking.
+
+**Notes for every template and every AI mode.** Built-in notes now cover each template in the AI Test Project: stat block, spell, magic item, class, subclass, deity, realm (Large Location), place (Other Location) and character. Each pack:
+- says what each of the template’s fields holds;
+- says where that usually is in a D&D Beyond or wiki clip;
+- gives its format (with examples marked as format only);
+- says what belongs in no field.
+
+A template gets the first pack its fields fit, or failing that, the one its name suggests.
+
+The notes now go to the AI in every mode. In the picking modes, the AI is told to copy values as the clip has them.
+
+**Suggest notes with AI.** In **Settings → Templates → AI notes for templates**, the AI drafts notes from:
+- the template’s fields;
+- its current notes;
+- the clip open in the panel, as an example (it is told not to use that clip’s facts).
+
+The draft goes in the box. It is saved only with **Save these notes**, and **Discard** goes back.
+
+**Fixed: a feature heading taken for the page name.** In the Subclass Template, “Level [?]: [Feature Name]” was treated as the page-name field, so it would have been overwritten with the subclass’s name. Only a heading like “[Spell] Name”, “[Magic Item] Name” or “[Name]” now stands for the page name.
+
+**Template fixture updated.** Your Statblock Template now has a Proficiency Bonus row, so a stat block’s proficiency bonus fills it instead of joining the unused content.
+
+**How 0.5.0 was checked**
+- **Unit tests:** 153 pass.
+- **End-to-end test:** passes. It covers the credit at the top, the tags, “+2 (12)”, links that keep the clip’s words, notes in both AI modes, and a suggested-notes draft that is discarded without being saved.
+- **Live template runs:** passed with the free AI model before the day’s OpenRouter limit ran out. That includes the Assassin page, whose links now keep “advantage on attack rolls” as written.
+- **Not measured yet:** `npm run eval:ai` with the notes in every mode. The free daily limit was used up, so its numbers above are still from 0.4.2. Run `npm run eval:ai` and `npm run eval:ai -- --no-notes` to compare.
+
 ## AI engines
 
 - **On-device (Chrome’s built-in AI)**:
@@ -168,7 +217,7 @@ On the small model, writing first made 3 wrong fills, then 2, before the rules a
 
 ## How it was tested
 
-- **140 unit tests** (`npm test`; 111 in 0.4.0), run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
+- **153 unit tests** (`npm test`; 140 in 0.4.2, 111 in 0.4.0), run on your real templates (saved as fixtures from the AI Test Project) and the D&D Beyond Goblin stat block. They cover:
   - slot finding;
   - every candidate pattern;
   - matching, ties, your choices, saved rules and AI checks;

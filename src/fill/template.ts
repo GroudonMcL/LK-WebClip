@@ -114,6 +114,15 @@ export function blockText(block: AnyBlock): string {
   return children.map(blockText).filter((t) => t !== '').join(sep)
 }
 
+/**
+ * Whether a bracketed heading stands for the page's name: "[Spell] Name", "[Magic Item] Name" or
+ * "[Name]", but not "Level [?]: [Feature Name]", which names something else.
+ */
+export function namesPage(text: string): boolean {
+  if (/\bname\b/i.test(text.replace(/\[[^\]]*\]/g, ' '))) return true
+  return [...text.matchAll(/\[([^\]]*)\]/g)].some((m) => /^\s*(?:page\s+)?name\s*$/i.test(m[1]!))
+}
+
 const SOURCE_HEADING = /^from\s*\[\s*source\s*\]\s*$/i
 /** A section's body stops at the next heading or at any of these. */
 const SECTION_STOP = new Set(['heading', 'rule', 'infobox', 'layout', 'layoutColumn', 'secret', 'textField', 'keyValue', 'resourceCollection', 'resourceLink', 'map', 'unsupported', 'expand'])
@@ -157,7 +166,7 @@ function walkSiblings(blocks: AnyBlock[], at: number[], path: string[], doc: num
         continue
       }
       if (text.includes('[')) {
-        if (/\bname\b/i.test(text)) out.push(slot({ label: 'Name', key: '', path: [...path, text], kind: 'name', placeholder: text, doc, target: { type: 'name', at: here } }))
+        if (namesPage(text)) out.push(slot({ label: 'Name', key: '', path: [...path, text], kind: 'name', placeholder: text, doc, target: { type: 'name', at: here } }))
         continue
       }
       const length = countWhile(blocks, i + 1, (b) => !SECTION_STOP.has(b.kind))
@@ -200,7 +209,7 @@ function slotsForProperty(block: AnyBlock, at: number[], path: string[], doc: nu
     // A field holding only a heading is a caption ("Core [Class] Traits"), unless it names the page.
     if (children.length > 0 && children.every((c) => c.kind === 'heading')) {
       const text = children.map(blockText).join(' ')
-      return text.includes('[') && /\bname\b/i.test(text)
+      return text.includes('[') && namesPage(text)
         ? [{ label: 'Name', key: '', path: [...path, text].join(' › '), kind: 'name' as const, placeholder: text, doc, target: { type: 'name' as const, at: [...at, 0] } }]
         : []
     }

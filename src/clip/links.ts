@@ -12,6 +12,10 @@ import { mapBlocks } from './htmlToBlocks.js'
  *    default (the way your aliases suggest LegendKeeper's own auto-linker works), and leaves
  *    code, headings, existing links and mentions alone.
  *
+ * LegendKeeper's editor shows a mention as its page's name, whatever the clip said. So by default
+ * (`exactNames`) only text written exactly as a page's name is linked, and the clip's words never
+ * change; aliases, plurals and other capitalisations stay as they are.
+ *
  * Text that names several pages is never linked by guesswork: it is reported as ambiguous, and
  * the user can pick a page for it. Every proposed link is a "term" the user can switch off.
  */
@@ -25,13 +29,19 @@ export interface LinkOptions {
   matchCase: boolean
   /** Link only the first mention of each page in the clip; later web links to it stay web links. */
   firstOnly: boolean
+  /**
+   * Link only text written exactly as a page's name (same words and capitals), so the clip's
+   * wording is kept: LegendKeeper shows a mention as the page's name. Off: aliases, plurals and,
+   * without `matchCase`, other capitalisations are linked too.
+   */
+  exactNames?: boolean
   /** Pages never linked to, such as the page the clip is being added to. */
   exclude?: ReadonlySet<string>
   /** The user's decisions, by term key: a page id to link to, or null to leave the term unlinked. */
   choices?: Readonly<Record<string, string | null>>
 }
 
-export const DEFAULT_LINK_OPTIONS: LinkOptions = { hyperlinks: true, text: true, matchCase: true, firstOnly: true }
+export const DEFAULT_LINK_OPTIONS: LinkOptions = { hyperlinks: true, text: true, matchCase: true, firstOnly: true, exactNames: true }
 
 export interface LinkTerm {
   /** Stable id for choices: which pass found it, and the text, normalised. */
@@ -59,7 +69,7 @@ export function linkClip(blocks: Block[], index: ProjectIndex, options: LinkOpti
   const terms = new Map<string, LinkTerm>()
   const linkedPages = new Set<string>()
   const exclude = options.exclude ?? new Set<string>()
-  const matcher = options.text ? PhraseMatcher.for(index, options.matchCase) : undefined
+  const matcher = options.text ? PhraseMatcher.for(index, options.matchCase, options.exactNames ?? false) : undefined
 
   const term = (pass: LinkTerm['pass'], text: string, candidates: IndexedResource[]): LinkTerm => {
     const key = `${pass}:${normalizeName(text)}`
@@ -123,7 +133,7 @@ function resolveHyperlinks(runs: Run[], index: ProjectIndex, options: LinkOption
       j++
     }
     const label = text.trim()
-    const candidates = label ? hyperlinkCandidates(label, index).filter((c) => !exclude.has(c.id)) : []
+    const candidates = label ? hyperlinkCandidates(label, index, options.exactNames).filter((c) => !exclude.has(c.id)) : []
     const entry = candidates.length > 0 ? term('hyperlink', label, candidates) : undefined
     // With "first mention only", a repeated link to an already-linked page keeps its web address.
     if (entry?.linkedTo && !(options.firstOnly && linkedPages.has(entry.linkedTo))) {
@@ -143,10 +153,12 @@ function resolveHyperlinks(runs: Run[], index: ProjectIndex, options: LinkOption
 /**
  * The pages a link's text could mean, trying ever looser readings and stopping at the first that
  * finds any: exact name, exact alias, either ignoring case, then without "'s" or a plural ending.
+ * With `exactNames`, only the exact name.
  */
-export function hyperlinkCandidates(label: string, index: ProjectIndex): IndexedResource[] {
+export function hyperlinkCandidates(label: string, index: ProjectIndex, exactNames = false): IndexedResource[] {
   const clean = tidy(label)
   const pages = index.pages()
+  if (exactNames) return pages.filter((r) => tidy(r.name) === clean)
   const readings: ((r: IndexedResource) => boolean)[] = [
     (r) => tidy(r.name) === clean,
     (r) => r.aliases.some((a) => tidy(a) === clean),
@@ -301,24 +313,27 @@ export class PhraseMatcher {
   private static cache = new WeakMap<ProjectIndex, Map<string, { version: number; matcher: PhraseMatcher }>>()
   private readonly root: TrieNode = node()
 
-  static for(index: ProjectIndex, matchCase: boolean): PhraseMatcher {
-    const key = String(matchCase)
+  static for(index: ProjectIndex, matchCase: boolean, exactNames = false): PhraseMatcher {
+    const key = `${matchCase}:${exactNames}`
     let byOption = PhraseMatcher.cache.get(index)
     if (!byOption) PhraseMatcher.cache.set(index, (byOption = new Map()))
     const cached = byOption.get(key)
     if (cached && cached.version === index.version) return cached.matcher
-    const matcher = new PhraseMatcher(index, matchCase)
+    const matcher = new PhraseMatcher(index, matchCase, exactNames)
     byOption.set(key, { version: index.version, matcher })
     return matcher
   }
 
   constructor(
     readonly index: ProjectIndex,
-    private readonly matchCase: boolean,
+    private matchCase: boolean,
+    /** Names only, with their exact capitals: no aliases, and no lowercase first letter. */
+    private readonly exactNames = false,
   ) {
+    if (exactNames) this.matchCase = true
     for (const resource of index.pages()) {
       this.add(resource.name, resource, 'names')
-      for (const alias of resource.aliases) this.add(alias, resource, 'aliases')
+      if (!exactNames) for (const alias of resource.aliases) this.add(alias, resource, 'aliases')
     }
   }
 
@@ -340,7 +355,7 @@ export class PhraseMatcher {
    */
   longestAt(tokens: Token[], i: number, text: string): { end: number; resources: IndexedResource[] } | undefined {
     const first = tokens[i]!
-    const firstKeys = this.matchCase ? unique([first.key, lowerFirst(first.key)]) : [first.key.toLowerCase()]
+    const firstKeys = this.exactNames ? [first.key] : this.matchCase ? unique([first.key, lowerFirst(first.key)]) : [first.key.toLowerCase()]
     let best: { end: number; resources: IndexedResource[] } | undefined
     for (const firstKey of firstKeys) {
       let at = this.root.next.get(firstKey)

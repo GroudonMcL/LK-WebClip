@@ -23,7 +23,9 @@ import { appendTree } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, suggest } from '../src/fill/engines.js'
 import { DEFAULT_SYNONYMS, Synonyms } from '../src/fill/labels.js'
 import { blocksForAi, planFill, type AiSuggestion, type FillMode, type FillPlan } from '../src/fill/plan.js'
-import { blockText, type AnyBlock } from '../src/fill/template.js'
+import { blockText, buildSlots, type AnyBlock } from '../src/fill/template.js'
+import { notesFor } from '../src/fill/notes.js'
+import { statblockTags } from '../src/fill/tags.js'
 import { ProjectIndex, configuredKeys, createPage, describeError, findOrCreateSource, siteName, type SourceConfig } from '../src/index.js'
 import { listTemplates, readTemplate } from '../src/lk/templates.js'
 
@@ -95,7 +97,8 @@ async function run_(c: Case): Promise<void> {
       const started = Date.now()
       try {
         const slots = slotsForAi(fill, c.mode, {})
-        const result = await suggest(engine, { slots, clip: plan.blocks, blockIndexes: blocksForAi(fill, slots, c.mode, plan.blocks.length, synonyms), title: c.capture.suggestedTitle, nameOf, labels: fill.blockLabels })
+        const notes = notesFor(content.name, buildSlots(tree), [], synonyms)?.text
+        const result = await suggest(engine, { slots, clip: plan.blocks, blockIndexes: blocksForAi(fill, slots, c.mode, plan.blocks.length, synonyms), title: c.capture.suggestedTitle, nameOf, labels: fill.blockLabels, notes, write: c.mode === 'labels-ai-write' ? {} : undefined })
         ai = result.suggestions
         console.log(`  AI (${process.env.OPENROUTER_MODEL ?? models[0]!.id}) answered in ${((Date.now() - started) / 1000).toFixed(1)} s with ${ai.size} suggestion(s)`)
       } catch (error) {
@@ -115,7 +118,7 @@ async function run_(c: Case): Promise<void> {
         ? { mode: 'new', parentId: run.resource.id, title: c.capture.suggestedTitle }
         : { mode: 'append', target: { resourceId: c.destination.appendTo, documentId: index.get(c.destination.appendTo)!.documents[0]!.id } },
       source: source ? { kind: 'existing', resourceId: source.id } : undefined,
-      template: { content, plan: fill, keepUnfilled: c.keepUnfilled },
+      template: { content, plan: fill, keepUnfilled: c.keepUnfilled, tags: statblockTags(fill, synonyms) },
       sourceConfig,
       onProgress: (message) => console.log(`  … ${message}`),
     })
@@ -153,7 +156,11 @@ await run_({
     check(text.includes('Nimble Escape') && text.includes('Scimitar'), 'Traits and Actions hold the clip’s entries')
     check(!text.includes('[Example') && !text.includes('[Description text]'), 'unfilled placeholders were removed')
     check(!json(blocks).includes('"Bonus Actions"'), 'the empty Bonus Actions field was removed')
-    check(json(blocks).includes('"mention"') && text.includes('Proficiency Bonus +2'), 'the From heading and unused content are at the end')
+    check(blocks[0]?.kind === 'heading' && plainText([blocks[0]]).startsWith('From '), 'the From heading is at the top of the page')
+    const lastRule = blocks.map((b) => b.kind).lastIndexOf('rule')
+    check(lastRule > 0 && blocks.slice(lastRule + 1).some((b) => plainText([b]).includes('Small Humanoid (Goblinoid)')), 'unused content is at the end, after a divider')
+    check(text.includes('Proficiency Bonus: +2'), 'the template’s Proficiency Bonus row is filled')
+    check(tags.includes('CR 1/4'), `the challenge rating was added as a tag (${tags.join(', ')})`)
   },
 })
 
@@ -164,8 +171,9 @@ await run_({
   mode: 'labels-ai',
   keepUnfilled: true,
   destination: 'new',
-  verify: ({ text }) => {
+  verify: ({ text, tags }) => {
     check(text.includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the AI put the size, type and alignment line in the infobox text field')
+    check(['Small', 'Humanoid', 'Neutral Evil', 'CR 1/4'].every((tag) => tags.includes(tag)), `size, type, alignment and CR tags were added (${tags.join(', ')})`)
     check(text.includes('[Description text]'), 'unfilled placeholders were kept')
   },
 })
@@ -180,13 +188,16 @@ await run_({
   destination: 'new',
   verifyPlan: (fill) => {
     const slot = (label: string) => fill.slots.find((s) => s.slot.label === label)!
-    check(slot('Initiative').origin === 'derived' && slot('Initiative').text === '+3', 'Initiative is worked out from Dexterity (+3)')
+    check(slot('Initiative').origin === 'derived' && slot('Initiative').text === '+3 (13)', 'Initiative is worked out from Dexterity (+3 (13))')
     check(!slot('Size, Creature Type, Alignment').text.includes('Assassin'), 'the page name is not in the size, type and alignment field')
     check(slot('Legendary Actions').status !== 'filled' || !slot('Legendary Actions').text.includes('Saving Throws'), 'Saving Throws is not in Legendary Actions')
   },
-  verify: ({ text }) => {
+  verify: ({ blocks, text }) => {
     check(text.includes('Medium Humanoid (Any Race), Any Non-Good Alignment'), 'the infobox holds the size, type and alignment')
-    check(text.includes('Saving Throws DEX +6') && text.includes('Proficiency Bonus +3'), 'Saving Throws and Proficiency Bonus are kept with the unused content')
+    check(text.includes('Saving Throws DEX +6') && text.includes('Proficiency Bonus: +3'), 'Saving Throws is kept with the unused content; Proficiency Bonus has its own row')
+    const relabelled = (json(blocks).match(/\{"mention":\{[^}]*\}/g) ?? []).filter((m) => { const r = JSON.parse(m.slice(11)); return r.text !== undefined && r.text !== r.name })
+    check(relabelled.length === 0, `every link reads as its page's name, so LegendKeeper shows the clip's own words${relabelled.length ? `: ${relabelled.join(' ')}` : ''}`)
+    check(text.includes('advantage on attack rolls'), 'words that only resemble a page name (“attack rolls”) are left as written')
   },
 })
 
@@ -204,6 +215,19 @@ await run_({
     check(blocks[1]?.kind === 'rule' && blocks[2]?.kind === 'infobox', 'then a divider and the filled template')
     check(text.includes('15 (leather armor, shield)'), 'the infobox is filled')
     check(!blocks.some((b) => b.kind === 'heading' && plainText([b]).startsWith('From ')), 'no From heading (credit switched off)')
+  },
+})
+
+const target2 = await createPage(lk, index, { parentId: run.resource.id, name: 'Goblin notes (append target, credited)', blocks: [p('Notes written before clipping.')] })
+await run_({
+  title: 'D&D Beyond goblin → Statblock Template appended to an existing page, with the credit heading',
+  capture: goblin('Goblin'),
+  template: 'Statblock Template',
+  mode: 'labels',
+  keepUnfilled: false,
+  destination: { appendTo: target2.resource.id },
+  verify: ({ blocks }) => {
+    check(blocks[1]?.kind === 'rule' && blocks[2]?.kind === 'heading' && plainText([blocks[2]]).startsWith('From ') && blocks[3]?.kind === 'infobox', 'the added content starts with a divider, then the From heading, then the template')
   },
 })
 

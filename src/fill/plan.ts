@@ -1,7 +1,7 @@
 import type { Block, Run } from '@legendkeeper/sdk/blocks'
 import { extractCandidates, leftoverBlocks, overlaps, type Candidate, type Extraction } from './candidates.js'
 import { isWritable } from './ai.js'
-import { deriveValue, type DerivedRule } from './derived.js'
+import { applyDerived, completes, type DerivedRule } from './derived.js'
 import { cleanLabel, compareLabels, LabelMatch, type Synonyms } from './labels.js'
 import { blockText, blocksToRuns, buildSlots, runsText, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
@@ -329,22 +329,31 @@ function plan(input: FillInput): FillPlan {
     }
   }
 
-  // 5. Worked-out fields, for what is still empty: Initiative from Dexterity's modifier.
+  // 5. Worked-out fields, for what is still empty: Initiative from Dexterity's modifier. A value the
+  // clip states is completed when it is only the start of the worked-out one ("+3" → "+3 (13)").
   for (const rule of input.derived ?? []) {
     const targetKey = cleanLabel(rule.target)
-    const sourceKey = cleanLabel(rule.source)
-    const source = fillable.map((s) => states.get(s.id)!).find((s) => s.status === 'filled' && compareLabels(s.slot.key, sourceKey, input.synonyms) !== undefined)
-    if (!source) continue
-    const value = deriveValue(source.text, rule.part)
-    if (!value) continue
+    const sources: SlotState[] = []
+    const value = applyDerived(rule, (name) => {
+      const key = cleanLabel(name)
+      const source = fillable.map((s) => states.get(s.id)!).find((s) => s.status === 'filled' && s.slot.key !== targetKey && compareLabels(s.slot.key, key, input.synonyms) !== undefined)
+      if (source && !sources.includes(source)) sources.push(source)
+      return source?.text
+    })
+    if (!value || sources.length === 0) continue
+    const from = sources.map((s) => s.slot.label).join(' and ')
     for (const slot of fillable) {
       const state = states.get(slot.id)!
+      if (slot.kind !== 'text' || input.overrides[slot.id]?.choice || compareLabels(slot.key, targetKey, input.synonyms) === undefined) continue
       // An AI answer left unticked (made up, or at odds with the clip) gives way to a worked-out value.
       const open = state.status === 'empty' || (state.status === 'off' && (state.origin === 'ai-written' || state.origin === 'ai-wrote' || state.warning !== undefined) && input.overrides[slot.id]?.off === undefined)
-      if (slot.kind !== 'text' || !open || input.overrides[slot.id]?.choice || compareLabels(slot.key, targetKey, input.synonyms) === undefined) continue
-      const candidate = { ...typedCandidate(slot, value), id: `derived:${slot.id}`, label: `From ${source.slot.label}` }
+      const completing = state.status === 'filled' && completes(state.text, value)
+      if (!open && !completing) continue
+      const candidate = { ...typedCandidate(slot, value), id: `derived:${slot.id}`, label: `From ${from}` }
       const off = input.overrides[slot.id]?.off === true
-      states.set(slot.id, { ...state, status: off ? 'off' : 'filled', origin: 'derived', text: value, candidate, warning: undefined, note: `From ${source.slot.label}: ${source.text}` })
+      // A completed value keeps the clip's line in use: the worked-out value includes it.
+      const note = completing ? `The clip gives “${state.text}”; completed from ${sources.map((s) => `${s.slot.label}: ${s.text}`).join(', ')}` : `From ${sources.map((s) => `${s.slot.label}: ${s.text}`).join(', ')}`
+      states.set(slot.id, { ...state, status: off ? 'off' : 'filled', origin: 'derived', text: value, candidate, warning: undefined, note })
       state.options.unshift(candidate)
     }
   }

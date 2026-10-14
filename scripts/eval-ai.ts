@@ -7,6 +7,7 @@
  *   npm run eval:ai -- --runs 3            # each case three times (free models vary between runs)
  *   npm run eval:ai -- --model some/model:free
  *   npm run eval:ai -- --modes labels-ai,labels-ai-write
+ *   npm run eval:ai -- --no-notes          # without the template notes, to measure what they add
  *
  * For each field the final state is compared with what a careful person would put there:
  *   - right:    the expected value, ticked; or nothing, when nothing belongs there;
@@ -34,7 +35,7 @@ import { blocksForAi, comparable, planFill, type FillMode, type FillPlan } from 
 import { notesFor } from '../src/fill/notes.js'
 import { buildSlots, type TemplateTree } from '../src/fill/template.js'
 
-const { values: args } = parseArgs({ options: { runs: { type: 'string', default: '1' }, model: { type: 'string' }, verbose: { type: 'boolean', default: false }, modes: { type: 'string' } } })
+const { values: args } = parseArgs({ options: { runs: { type: 'string', default: '1' }, model: { type: 'string' }, verbose: { type: 'boolean', default: false }, modes: { type: 'string' }, 'no-notes': { type: 'boolean', default: false } } })
 const apiKey = process.env.OPENROUTER_API_KEY?.trim()
 if (!apiKey) throw new Error('Set OPENROUTER_API_KEY (free models only are used).')
 
@@ -60,7 +61,7 @@ const CASES: Case[] = [
     title: 'Goblin',
     modes: ['labels-ai', 'labels-ai-write', 'ai'],
     expected: {
-      'Armour Class': '15 (leather armor, shield)', Initiative: '+2', 'Hit Points': '7 (2d6)', Speed: '30 ft.',
+      'Armour Class': '15 (leather armor, shield)', Initiative: '+2 (12)', 'Hit Points': '7 (2d6)', Speed: '30 ft.',
       Strength: '8 (-1)', Dexterity: '14 (+2)', Constitution: '10 (+0)', Intelligence: '10 (+0)', Wisdom: '8 (-1)', Charisma: '8 (-1)',
       Skills: 'Stealth +6', Resistances: null, Senses: 'Darkvision 60 ft., Passive Perception 9', Languages: 'Common, Goblin',
       'Challenge Rating': '1/4 (50 XP)', 'Size, Creature Type, Alignment': 'Small Humanoid (Goblinoid), Neutral Evil',
@@ -76,7 +77,7 @@ const CASES: Case[] = [
     title: 'Assassin',
     modes: ['labels-ai', 'labels-ai-write', 'ai'],
     expected: {
-      'Armour Class': '15 (studded leather)', Initiative: '+3', 'Hit Points': '78 (12d8 + 24)', Speed: '30 ft.',
+      'Armour Class': '15 (studded leather)', Initiative: '+3 (13)', 'Hit Points': '78 (12d8 + 24)', Speed: '30 ft.',
       Strength: '11 (+0)', Dexterity: '16 (+3)', Constitution: '14 (+2)', Intelligence: '13 (+1)', Wisdom: '11 (+0)', Charisma: '10 (+0)',
       Skills: /^Acrobatics \+6/, Resistances: 'Poison', Senses: 'Passive Perception 13', Languages: "Thieves' cant plus any two languages",
       'Challenge Rating': '8 (3,900 XP)', 'Size, Creature Type, Alignment': 'Medium Humanoid (Any Race), Any Non-Good Alignment',
@@ -92,7 +93,7 @@ const CASES: Case[] = [
     title: 'Zombie',
     modes: ['labels-ai', 'labels-ai-write', 'ai'],
     expected: {
-      'Armour Class': '8', Initiative: '-2', 'Hit Points': '22 (3d8 + 9)', Speed: '20 ft.',
+      'Armour Class': '8', Initiative: '-2 (8)', 'Hit Points': '22 (3d8 + 9)', Speed: '20 ft.',
       Strength: '13 (+1)', Dexterity: '6 (−2)', Constitution: '16 (+3)', Intelligence: '3 (−4)', Wisdom: '6 (−2)', Charisma: '5 (−3)',
       Skills: null, Resistances: null, Immunities: /^poison\b/i, Senses: 'darkvision 60 ft., passive Perception 8',
       Languages: "understands the languages it knew in life but can't speak", 'Challenge Rating': '1/4 (50 XP)',
@@ -124,14 +125,15 @@ for (let run = 1; run <= Number(args.runs); run++) {
     const clip: Block[] = htmlStringToBlocks(fixture(c.fixture), parser, { baseUrl: 'https://www.dndbeyond.com/' }).blocks
     const { id, tree } = template(c.template)
     for (const mode of c.modes.filter((m) => !onlyModes || onlyModes.includes(m))) {
-      const templateNotes = mode === 'labels-ai-write' ? notesFor(c.template.replace(/_/g, ' '), buildSlots(tree), [], synonyms)?.text : undefined
+      // The template's notes guide the AI in every mode (--no-notes leaves them out, to compare).
+      const templateNotes = args['no-notes'] ? undefined : notesFor(c.template.replace(/_/g, ' '), buildSlots(tree), [], synonyms)?.text
       const base = { tree, templateId: id, clip, title: c.title, site: 'eval', synonyms, rules: [], mode, overrides: {}, derived }
       const first = planFill(base)
       const slots = slotsForAi(first, mode, {})
       const started = Date.now()
       let plan: FillPlan = first
       try {
-        const result = await suggest(engine, { slots, clip, blockIndexes: blocksForAi(first, slots, mode, clip.length, synonyms), title: c.title, labels: first.blockLabels, write: mode === 'labels-ai-write' ? { notes: templateNotes } : undefined })
+        const result = await suggest(engine, { slots, clip, blockIndexes: blocksForAi(first, slots, mode, clip.length, synonyms), title: c.title, labels: first.blockLabels, notes: templateNotes, write: mode === 'labels-ai-write' ? {} : undefined })
         plan = planFill({ ...base, ai: result.suggestions })
         if (args.verbose) console.log(`${result.job?.prompt}\n\nAnswer: ${result.raw}\n`)
       } catch (error) {

@@ -10,12 +10,14 @@ import { appendTree, appendedTemplate, applyComposition, compose, tidyRules } fr
 import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngine } from '../src/fill/engines.js'
 import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
 import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillInput, type SavedRule } from '../src/fill/plan.js'
-import { DEFAULT_DERIVED, deriveValue, parseDerived } from '../src/fill/derived.js'
-import { DND5E_STATBLOCK, notesFor, withNotes } from '../src/fill/notes.js'
-import { isWritable, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.js'
+import { applyDerived, completes, DEFAULT_DERIVED, deriveValue, parseDerived } from '../src/fill/derived.js'
+import { builtInPackFor, DND5E_STATBLOCK, notesFor, withNotes } from '../src/fill/notes.js'
+import { buildNotesJob, NOTES_SYSTEM_PROMPT, parseNotesAnswer } from '../src/fill/notesAi.js'
+import { isWritable, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.js'
 import { OnDeviceEngine } from '../src/fill/engines.js'
-import { withNewDefaults } from '../src/extension/state.js'
-import { blockText, buildSlots, fillTree, forCopy, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
+import { withNewDefaults, withNewDerived } from '../src/extension/state.js'
+import { challengeTag, creatureLineTags, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
+import { blockText, buildSlots, fillTree, forCopy, namesPage, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
 const synonyms = new Synonyms(DEFAULT_SYNONYMS)
@@ -140,7 +142,8 @@ describe('planFill', () => {
     assert.match(slotNamed(p, 'Actions').text, /Scimitar[\s\S]*Shortbow/)
     assert.equal(slotNamed(p, 'Initiative').status, 'empty')
     // The name line is the page title, so it isn't repeated in the unused content.
-    assert.equal(text(p.leftovers), 'Small Humanoid (Goblinoid), Neutral Evil\nProficiency Bonus +2')
+    assert.equal(text(p.leftovers), 'Small Humanoid (Goblinoid), Neutral Evil')
+    assert.equal(slotNamed(p, 'Proficiency Bonus').text, '+2')
   })
 
   it('never guesses between two equally good values', () => {
@@ -220,13 +223,14 @@ describe('compose and fill', () => {
     const p = plan()
     const filled = applyComposition(statblock.tree, compose(statblock.tree, p, { sourceHeading: heading, keepUnfilled: false }))
     const main = filled.docs[0]!
-    const box = main[0] as AnyBlock
+    const box = main[1] as AnyBlock
     const firstRows = (box.rows[0].rows as AnyBlock[])
     assert.equal(firstRows[0]!.id, 'uyi47pta')
     assert.deepEqual(firstRows.map((r) => r.key), ['Armour Class', 'Hit Points', 'Speed'], 'the empty Initiative row is gone')
     const all = JSON.stringify(main)
     assert.ok(!all.includes('Bonus Actions') && !all.includes('[Description text]'))
-    assert.deepEqual(main.slice(-4).map((b) => b.kind), ['rule', 'heading', 'paragraph', 'paragraph'], 'one divider, then the credit and unused content')
+    assert.equal(main[0], heading, 'the credit comes first')
+    assert.deepEqual(main.slice(-2).map((b) => b.kind), ['rule', 'paragraph'], 'one divider, then the unused content')
   })
 
   it('keeps placeholders when asked', () => {
@@ -248,8 +252,9 @@ describe('compose and fill', () => {
 
   it('without a credit, leaves out the heading and still adds unused content', () => {
     const filled = applyComposition(statblock.tree, compose(statblock.tree, plan(), { keepUnfilled: false }))
-    const tail = filled.docs[0]!.slice(-3)
-    assert.deepEqual(tail.map((b) => b.kind), ['rule', 'paragraph', 'paragraph'])
+    const tail = filled.docs[0]!.slice(-2)
+    assert.deepEqual(tail.map((b) => b.kind), ['rule', 'paragraph'])
+    assert.ok(!filled.docs[0]!.some((b) => b.kind === 'heading' && blockText(b as AnyBlock).startsWith('From ')))
   })
 
   it('appends the main tab after a divider, with no ids and nothing unsupported', () => {
@@ -257,6 +262,7 @@ describe('compose and fill', () => {
     const p = planFill({ tree, templateId: 'c', clip: blocks('<p>Species: Elf</p>'), title: 'Arwen', site: '', synonyms, rules: [], mode: 'labels', overrides: {} })
     const out = appendedTemplate(tree, compose(tree, p, { sourceHeading: heading, keepUnfilled: true }))
     assert.equal(out[0]!.kind, 'rule')
+    assert.deepEqual(out[1], heading, 'the credit tops the added content')
     const json = JSON.stringify(out)
     assert.ok(!json.includes('"id"') && !json.includes('unsupported'))
     assert.ok(json.includes('Elf'))
@@ -331,7 +337,7 @@ describe('AI answers checked against the clip (Assassin)', () => {
     const initiative = slotNamed(p, 'Initiative')
     assert.equal(initiative.status, 'filled')
     assert.equal(initiative.origin, 'derived')
-    assert.equal(initiative.text, '+3')
+    assert.equal(initiative.text, '+3 (13)')
     assert.match(initiative.note!, /Dexterity: 16 \(\+3\)/)
     assert.ok(!slotsForAi(p, 'labels-ai', {}).some((s) => s.label === 'Initiative'), 'the AI is not asked about it')
   })
@@ -468,9 +474,10 @@ describe('AI picks snap to the clip’s labels', () => {
 
 describe('worked-out fields', () => {
   it('reads rules and takes the right part of a value', () => {
-    assert.deepEqual(parseDerived('Initiative = Dexterity modifier\nnonsense\nSpeed = Base Speed'), [
-      { target: 'Initiative', source: 'Dexterity', part: 'modifier' },
-      { target: 'Speed', source: 'Base Speed', part: 'value' },
+    assert.deepEqual(parseDerived('Initiative = Dexterity modifier\nnonsense\nSpeed = Base Speed\nInit = {Dexterity modifier} ({10 + Dexterity modifier})\nBad = {Dexterity'), [
+      { target: 'Initiative', pieces: [{ source: 'Dexterity', part: 'modifier' }] },
+      { target: 'Speed', pieces: [{ source: 'Base Speed', part: 'value' }] },
+      { target: 'Init', pieces: [{ source: 'Dexterity', part: 'modifier' }, ' (', { source: 'Dexterity', part: 'modifier', add: 10 }, ')'] },
     ])
     assert.equal(deriveValue('16 (+3)', 'modifier'), '+3')
     assert.equal(deriveValue('8 (−1)', 'modifier'), '-1')
@@ -478,6 +485,33 @@ describe('worked-out fields', () => {
     assert.equal(deriveValue('9', 'modifier'), '-1')
     assert.equal(deriveValue('Darkvision 60 ft.', 'modifier'), undefined)
     assert.equal(deriveValue('30 ft., fly 60 ft.', 'number'), '30')
+  })
+
+  it('writes Initiative as the modifier and, in brackets, 10 plus it', () => {
+    const [rule] = parseDerived(DEFAULT_DERIVED)
+    const dex = (text: string) => applyDerived(rule!, (name) => (name === 'Dexterity' ? text : undefined))
+    assert.equal(dex('12 (+1)'), '+1 (11)')
+    assert.equal(dex('6 (−2)'), '-2 (8)')
+    assert.equal(dex('10 (+0)'), '+0 (10)')
+    assert.equal(dex('nothing'), undefined)
+    assert.equal(applyDerived(rule!, () => undefined), undefined)
+    assert.ok(completes('+3', '+3 (13)'))
+    assert.ok(completes('−2', '-2 (8)'))
+    assert.ok(!completes('+3 (13)', '+3 (13)'))
+    assert.ok(!completes('+1', '+13 (23)'))
+  })
+
+  it('replaces an old default rule in saved settings', () => {
+    assert.equal(withNewDerived('Initiative = Dexterity modifier\nSpeed = Base Speed'), `${DEFAULT_DERIVED}\nSpeed = Base Speed`)
+  })
+
+  it('completes a value the clip only starts', () => {
+    const clip = blocks('<p><strong>DEX</strong> 16 (+3)</p><p><strong>Initiative</strong> +3</p>')
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Initiative').text, '+3 (13)')
+    assert.equal(slotNamed(p, 'Initiative').origin, 'derived')
+    assert.match(slotNamed(p, 'Initiative').note ?? '', /The clip gives “\+3”/)
+    assert.ok(!p.leftovers.some((b) => blockText(b as AnyBlock).includes('Initiative')), 'the clip’s line counts as used')
   })
 
   it('wins over an AI guess that was left unticked', () => {
@@ -489,7 +523,7 @@ describe('worked-out fields', () => {
       [id('Initiative'), { blocks: [], value: '+2 (12)' }],
     ]) })
     assert.equal(slotNamed(p, 'Initiative').origin, 'derived')
-    assert.equal(slotNamed(p, 'Initiative').text, '+2')
+    assert.equal(slotNamed(p, 'Initiative').text, '+2 (12)')
   })
 
   it('never replaces a value the clip states', () => {
@@ -539,7 +573,7 @@ describe('Labels then AI writes', () => {
     const saved = withNotes([], 'Statblock Template', 'Initiative: +N.')
     assert.deepEqual(notesFor('statblock template', slots, saved, synonyms), { text: 'Initiative: +N.', from: 'yours' })
     assert.deepEqual(withNotes(saved, 'Statblock Template', ''), [], 'empty notes are removed')
-    assert.equal(notesFor('God Template', buildSlots(template('God_Template').tree), [], synonyms), undefined, 'the stat block pack doesn’t fit a god')
+    assert.equal(notesFor('God Template', buildSlots(template('God_Template').tree), [], synonyms)?.from, 'Deity', 'the stat block pack doesn’t fit a god; its own pack does')
   })
 
   it('lets the AI write short fields only, and gives it the notes', () => {
@@ -659,5 +693,83 @@ describe('OpenRouter engine', () => {
     const engine = new OpenRouterEngine({ apiKey: 'k', model: 'a:free', fallbacks: [{ id: 'b:free', name: '', contextLength: 0, structured: false, jsonMode: false }], fetchImpl })
     await assert.rejects(engine.run(job), (error: unknown) => error instanceof OpenRouterError && /30 seconds/.test(error.message))
     assert.equal(calls, 1)
+  })
+})
+
+describe('stat block tags', () => {
+  it('reads size, type and alignment from the creature line', () => {
+    assert.deepEqual(creatureLineTags('Medium Humanoid (Any Race), Any Non-Good Alignment'), ['Medium', 'Humanoid', 'Any Non-Good Alignment'])
+    assert.deepEqual(creatureLineTags('Small Fey (Goblinoid), Typically Chaotic Neutral'), ['Small', 'Fey', 'Chaotic Neutral'])
+    assert.deepEqual(creatureLineTags('medium undead, neutral evil'), ['Medium', 'Undead', 'Neutral Evil'])
+    assert.deepEqual(creatureLineTags('Medium or Small Humanoid, Unaligned'), ['Medium', 'Small', 'Humanoid', 'Unaligned'])
+    assert.deepEqual(creatureLineTags('Large Swarm of Tiny Beasts, unaligned'), ['Large', 'Swarm of Tiny Beasts', 'Unaligned'])
+    assert.deepEqual(creatureLineTags('Gargantuan Dragon'), ['Gargantuan', 'Dragon'])
+  })
+
+  it('writes the challenge rating as "CR n"', () => {
+    assert.equal(challengeTag('8 (3,900 XP)'), 'CR 8')
+    assert.equal(challengeTag('1/4 (50 XP)'), 'CR 1/4')
+    assert.equal(challengeTag('½'), 'CR 1/2')
+    assert.equal(challengeTag('CR 13 (XP 10,000; PB +5)'), 'CR 13')
+    assert.equal(challengeTag('none'), undefined)
+  })
+
+  it('tags a filled stat block template, and nothing else', () => {
+    const p = plan({ mode: 'labels' })
+    const withLine = planFill({ tree: statblock.tree, templateId: statblock.id, clip: goblin, title: 'Goblin', site: '', synonyms, rules: [], mode: 'labels', overrides: { [slotNamed(p, 'Size, Creature Type, Alignment').slot.id]: { choice: 'typed', text: 'Small Humanoid (Goblinoid), Neutral Evil' } } })
+    assert.deepEqual(statblockTags(withLine, synonyms), ['Small', 'Humanoid', 'Neutral Evil', 'CR 1/4'])
+    const spell = template('Spell_Template')
+    assert.deepEqual(statblockTags(planFill({ tree: spell.tree, templateId: spell.id, clip: goblin, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {} }), synonyms), [])
+  })
+
+  it('uses the project’s spelling of a tag, and reads edited tags', () => {
+    assert.deepEqual(withProjectSpelling(['Humanoid', 'CR 8', 'Neutral Evil'], ['humanoid', 'Creature']), ['humanoid', 'CR 8', 'Neutral Evil'])
+    assert.deepEqual(parseTags(' Medium,, humanoid , Medium '), ['Medium', 'humanoid'])
+  })
+})
+
+describe('built-in notes and AI-suggested notes', () => {
+  const names = ['Character_Template', 'Class_Template', 'God_Template', 'Large_Location_Template', 'Magic_Item_Template', 'Other_Location_Template', 'Spell_Template', 'Statblock_Template', 'Subclass_Template']
+
+  it('has notes for every template in the test project, naming its own fields', () => {
+    const packs = names.map((name) => {
+      const slots = buildSlots(template(name).tree)
+      const pack = builtInPackFor(slots, synonyms, name.replace(/_/g, ' '))
+      assert.ok(pack, `${name} has a pack`)
+      for (const slot of slots.filter((s) => ['text', 'rich'].includes(s.kind))) {
+        assert.ok(pack.text.toLowerCase().includes(slot.label.toLowerCase().slice(0, 12)), `${pack.name} notes mention “${slot.label}”`)
+      }
+      return pack.name
+    })
+    assert.equal(new Set(packs).size, names.length, 'each template has its own pack')
+  })
+
+  it('does not treat a feature heading as the page name', () => {
+    assert.ok(namesPage('[Spell] Name') && namesPage('[Magic Item] Name') && namesPage('[Name]'))
+    assert.ok(!namesPage('Level [?]: [Feature Name]'))
+    assert.ok(!buildSlots(template('Subclass_Template').tree).some((s) => s.kind === 'name'))
+  })
+
+  it('asks for notes from the fields, the notes so far and an example clip, and reads the answer', () => {
+    const slots = buildSlots(statblock.tree)
+    const job = buildNotesJob({ templateName: 'Statblock Template', slots, current: 'Initiative: +N.', clip: { blocks: goblin, title: 'Goblin' } })
+    assert.match(job.prompt, /- "Armour Class" \(one line\)/)
+    assert.match(job.prompt, /- "Traits" \(paragraphs, a heading in the template/)
+    assert.match(job.prompt, /Notes it has now[\s\S]*Initiative: \+N\./)
+    assert.match(job.prompt, /An example clip, "Goblin"[\s\S]*Nimble Escape/)
+    assert.equal(job.system, NOTES_SYSTEM_PROMPT)
+    assert.equal(parseNotesAnswer('```json\n{"notes": "A creature.\\n- Speed: 30 ft."}\n```'), 'A creature.\n- Speed: 30 ft.')
+    assert.equal(parseNotesAnswer('Plain notes.'), 'Plain notes.')
+  })
+
+  it('gives the notes to the AI in every mode, telling it to copy when it only picks', () => {
+    const p = plan({ mode: 'labels-ai' })
+    const slots = slotsForAi(p, 'labels-ai', {})
+    const pick = buildAiJob({ slots, clip: goblin, blockIndexes: goblin.map((_, i) => i), title: 'Goblin', notes: 'Speed: walking first.' })!
+    assert.match(pick.prompt, /Notes about this template \(they say what belongs in each field; copy values as the clip has them, never reformat\):\nSpeed: walking first\./)
+    assert.equal(pick.system, SYSTEM_PROMPT)
+    const write = buildAiJob({ slots, clip: goblin, blockIndexes: goblin.map((_, i) => i), title: 'Goblin', notes: 'Speed: walking first.', write: {} })!
+    assert.match(write.prompt, /Notes about this template:\nSpeed: walking first\./)
+    assert.equal(write.system, WRITE_SYSTEM_PROMPT)
   })
 })

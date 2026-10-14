@@ -31,7 +31,8 @@ const index = new ProjectIndex([
   resource('tpl', 'Red Dragon Template', [], 'templates'),
 ])
 
-const link = (html: string, options: Partial<LinkOptions> = {}) => linkClip(blocks(html), index, { ...DEFAULT_LINK_OPTIONS, ...options })
+// Most tests here are of the looser linking; "exact names" has its own tests.
+const link = (html: string, options: Partial<LinkOptions> = {}) => linkClip(blocks(html), index, { ...DEFAULT_LINK_OPTIONS, exactNames: false, ...options })
 /** The paragraph's runs, with mentions written as [[id|label]] so expectations read easily. */
 function show(result: { blocks: Block[] }): string {
   const runs = (b: Block): Run[] => ('content' in b && Array.isArray(b.content) ? (b.content as Run[]) : [])
@@ -160,6 +161,26 @@ describe('linkClip: hyperlinks', () => {
 
   it('resolves links in headings, where plain text is left alone', () => {
     assert.equal(show(link('<h2><a href="/rd">Red Dragon</a> and Dragon</h2>')), '[[rd]] and Dragon')
+  })
+})
+
+describe('linkClip: exact names only (the default)', () => {
+  const exact = (html: string, options: Partial<LinkOptions> = {}) => linkClip(blocks(html), index, { ...DEFAULT_LINK_OPTIONS, ...options })
+
+  it('links only text written as the page’s name, so the clip’s words never change', () => {
+    assert.equal(
+      show(exact('<p>Make an Attack Roll, or attack rolls, or Attack Rolls, near Greyhawk and the Free City of Greyhawk.</p>')),
+      'Make an Attack Roll, or attack rolls, or [[ar]], near Greyhawk and the [[city]].',
+    )
+    assert.equal(show(exact('<p>A dragon and a Dragon’s hoard.</p>')), 'A dragon and a [[dragon]]’s hoard.')
+  })
+
+  it('keeps a web link whose text is not a page’s exact name', () => {
+    const result = exact('<p><a href="/ar">attack roll</a> and <a href="/rd">Red Dragon</a></p>')
+    assert.equal(show(result), 'attack roll and [[rd]]')
+    const runs = result.blocks[0]?.kind === 'paragraph' ? result.blocks[0].content : []
+    assert.ok(runs.some((r) => 'link' in r && r.link === 'https://example.com/ar'))
+    assert.deepEqual(hyperlinkCandidates('red dragons', index, true), [])
   })
 })
 

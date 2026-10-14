@@ -6,9 +6,10 @@ import { buildSlots, fillTree, forCopy, SIDEBAR, type AnyBlock, type FilledTree,
  * Turns a fill plan into what is written: the values, unfilled slots kept or removed, the
  * "From <Source>" credit, and the clip's unused content.
  *
- * The credit and unused content go under the template's own "From [Source]" heading when it has
- * one with only placeholder text under it (as in a God template); otherwise at the end of the
- * main tab, after a divider.
+ * A template with its own "From [Source]" heading (as in a God template) gets the credit there, and
+ * the unused content under it when only placeholder text sits under it. Otherwise the credit goes
+ * at the top of the main tab (or of the added content, on an append), and the unused content at
+ * the end, after a divider.
  */
 
 export interface ComposeOptions {
@@ -20,6 +21,8 @@ export interface ComposeOptions {
 
 export interface Composition {
   fills: Map<string, SlotFill>
+  /** Blocks to add at the start of the main tab: the credit, when the template has no place for it. */
+  head: Block[]
   /** Blocks to add at the end of the main tab. */
   tail: Block[]
   /** The tab that gets the tail: the one named Main, else the first. */
@@ -58,11 +61,10 @@ export function compose(tree: TemplateTree, plan: FillPlan, options: ComposeOpti
     else if (!options.keepUnfilled) fills.set(slot.id, { remove: true })
   }
 
-  const tail: Block[] = []
-  const credit = options.sourceHeading && sourceSlots.length === 0 ? [options.sourceHeading] : []
+  const head = options.sourceHeading && sourceSlots.length === 0 ? [options.sourceHeading] : []
   const rest = placed ? [] : leftovers
-  if (credit.length + rest.length > 0) tail.push(rule(), ...credit, ...rest)
-  return { fills, tail, mainDoc }
+  const tail = rest.length > 0 ? [rule(), ...rest] : []
+  return { fills, head, tail, mainDoc }
 }
 
 function originalBlock(tree: TemplateTree, slot: Slot): Block | undefined {
@@ -76,13 +78,13 @@ function originalBlock(tree: TemplateTree, slot: Slot): Block | undefined {
   return block as Block | undefined
 }
 
-/** Fills a tree (the template, or a page made from it) and adds the tail to its main tab. */
+/** Fills a tree (the template, or a page made from it) and adds the head and tail to its main tab. */
 export function applyComposition(tree: TemplateTree, composition: Composition): FilledTree & { missing: string[] } {
   const slots = buildSlots(tree)
   const ids = new Set(slots.map((s) => s.id))
   const missing = [...composition.fills.keys()].filter((id) => !ids.has(id))
   const filled = fillTree(tree, slots, composition.fills)
-  filled.docs[composition.mainDoc] = [...(filled.docs[composition.mainDoc] ?? []), ...composition.tail]
+  filled.docs[composition.mainDoc] = [...composition.head, ...(filled.docs[composition.mainDoc] ?? []), ...composition.tail]
   filled.docs = filled.docs.map(tidyRules)
   return { ...filled, missing }
 }
@@ -99,8 +101,8 @@ export function tidyRules(blocks: Block[]): Block[] {
 }
 
 /**
- * What adding a template to an existing page appends: a divider, the template's main tab filled in,
- * then the credit and unused content. Sidebar properties are not touched on an existing page.
+ * What adding a template to an existing page appends: a divider, the credit, the template's main tab
+ * filled in, then the unused content. Sidebar properties are not touched on an existing page.
  */
 export function appendedTemplate(tree: TemplateTree, composition: Composition): Block[] {
   const main: TemplateTree = { docs: [tree.docs[composition.mainDoc]!], properties: [] }
@@ -139,7 +141,7 @@ export function mapImages(composition: Composition, replace: (url: string) => Bl
     } else if ('blocks' in fill) fills.set(id, { blocks: swap(fill.blocks) })
     else fills.set(id, fill)
   }
-  return { ...composition, fills, tail: swap(composition.tail) }
+  return { ...composition, fills, head: swap(composition.head), tail: swap(composition.tail) }
 }
 
 /** Every image URL the composition would write. */
@@ -156,6 +158,7 @@ export function imageUrls(composition: Composition): Set<string> {
     if ('image' in fill) out.add(fill.image.url)
     if ('blocks' in fill) walk(fill.blocks)
   }
+  walk(composition.head)
   walk(composition.tail)
   return out
 }

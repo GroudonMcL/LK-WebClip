@@ -97,6 +97,11 @@ try {
   await panel.getByPlaceholder('Search for your Sources page…').fill('Sources')
   await panel.locator('.picker-results li', { has: panel.locator('.path', { hasText: new RegExp(`^${SANDBOX_NAME}$`) }) }).first().click()
   await panel.screenshot({ path: `${shots}settings.png`, fullPage: true })
+  // Linking exact page names only is the default; the selection below tests the looser linking
+  // (aliases and choosing between pages), and the template clip later the default.
+  const exactNames = panel.getByLabel('Link only exact page names')
+  check(await exactNames.isChecked(), 'only exact page names are linked by default')
+  await exactNames.uncheck()
   await panel.getByRole('button', { name: 'Done' }).click()
   check(await panel.getByText('Select something on a web page').isVisible(), 'the panel waits for a clip')
 
@@ -141,7 +146,7 @@ try {
   console.log(`  links: ${linksText.replace(/\n+/g, ' | ')}`)
   await panel.screenshot({ path: `${shots}new-page-form.png`, fullPage: true })
   await panel.getByRole('button', { name: 'Create page' }).click()
-  await panel.getByText('Page created').waitFor({ timeout: 60_000 })
+  await panel.getByText('Page created', { exact: true }).waitFor({ timeout: 60_000 })
   await panel.screenshot({ path: `${shots}done.png`, fullPage: true })
   const newPageId = resourceIdFrom(await panel.getByRole('link', { name: 'Open in LegendKeeper' }).getAttribute('href'))
   const page1 = await readPage(newPageId)
@@ -169,7 +174,7 @@ try {
   await panel.locator('.picker-results li').first().click()
   await panel.screenshot({ path: `${shots}append-form.png`, fullPage: true })
   await panel.getByRole('button', { name: 'Add to page' }).click()
-  await panel.getByText('Added to the page').waitFor({ timeout: 60_000 })
+  await panel.getByText('Added to the page', { exact: true }).waitFor({ timeout: 60_000 })
   const page1b = await readPage(newPageId)
   const tail = page1b.blocks.slice(page1.blocks.length)
   check(tail[0]?.kind === 'rule' && headingText(tail[1]) === 'From Wikipedia', 'the append starts with a divider and "From Wikipedia"')
@@ -186,7 +191,7 @@ try {
   check(articleTitle === 'Adult Red Dragon', `the page name defaults to the article title ("${articleTitle}")`)
   await panel.getByPlaceholder('Name of the new page').fill('Adult Red Dragon (E2E article)')
   await panel.getByRole('button', { name: 'Create page' }).click()
-  await panel.getByText('Page created').waitFor({ timeout: 60_000 })
+  await panel.getByText('Page created', { exact: true }).waitFor({ timeout: 60_000 })
   const page2 = await readPage(resourceIdFrom(await panel.getByRole('link', { name: 'Open in LegendKeeper' }).getAttribute('href')))
   check(page2.parentId === run.resource.id, 'the article page went under the remembered parent')
   check(kinds(page2.blocks).filter((k) => k === 'heading').length >= 3, `the article kept its headings (${page2.blocks.length} top-level blocks)`)
@@ -205,6 +210,7 @@ try {
       contextWindow: 4096,
       destroy() {},
       async prompt(input) {
+        if (input.includes('Write the notes')) return JSON.stringify({ notes: 'A creature stat block (stand-in notes).\\n- Armour Class: the number, e.g. "12".' })
         const block = /\\[(\\d+)\\] \\(paragraph\\) Small Humanoid/.exec(input)?.[1]
         const keys = [...input.matchAll(/^(s\\d+): "([^"]+)"/gm)]
         return JSON.stringify(Object.fromEntries(keys.map(([, key, label]) => [key, { blocks: label.startsWith('Size') && block ? [Number(block)] : [], value: label === 'Immunities' ? '+2' : '' }])))
@@ -216,6 +222,7 @@ try {
   await panel.getByRole('combobox').filter({ has: panel.locator('option', { hasText: 'On-device' }) }).selectOption('on-device')
   await panel.getByText('Ready. It runs on this computer').waitFor()
   check(true, 'Settings show the on-device model as ready')
+  await panel.getByLabel('Link only exact page names').check()
   await panel.screenshot({ path: `${shots}template-settings.png`, fullPage: true })
   await panel.getByRole('button', { name: 'Done' }).click()
 
@@ -246,7 +253,9 @@ try {
   const immunities = fields.locator('li[data-slot="Immunities"]')
   check(!(await immunities.locator('input[type="checkbox"]').isChecked()) && (await immunities.locator('.slot-warning').innerText()).includes('The clip labels this'), 'the AI’s slip (“+2” in Immunities) is shown unticked, with the reason')
   const initiativeRow = fields.locator('li[data-slot="Initiative"]')
-  check((await initiativeRow.locator('.origin').innerText()) === 'Worked out' && (await initiativeRow.innerText()).includes('+2'), 'Initiative was worked out from Dexterity (+2)')
+  check((await initiativeRow.locator('.origin').innerText()) === 'Worked out' && (await initiativeRow.innerText()).includes('+2 (12)'), 'Initiative was worked out from Dexterity: +2 (12)')
+  const tagsInput = panel.getByLabel('Tags to add')
+  check((await tagsInput.inputValue()) === 'Small, Humanoid, Neutral Evil, CR 1/4', `the stat block's tags are suggested for review (${await tagsInput.inputValue()})`)
   // A manual choice, remembered as a rule for this site.
   const legendary = fields.locator('li[data-slot="Legendary Actions"]')
   await fields.locator('summary.empty-slots').click()
@@ -260,6 +269,13 @@ try {
   await panel.locator('.ai-exchange summary').click()
   const exchange = await panel.locator('.ai-exchange').innerText()
   check(exchange.includes('Notes about this template:') && exchange.includes('— write: a short value'), '“Labels then AI writes” gives the AI the built-in stat block notes and lets it write short fields')
+  await panel.getByRole('radio', { name: 'Labels then AI', exact: true }).click()
+  await panel.getByText('The built-in “D&D 5e stat block” notes guide it.').waitFor()
+  await panel.locator('.template-ai').getByText(/suggested \d+ of/).waitFor({ timeout: 30_000 })
+  await panel.locator('.ai-exchange summary').click()
+  check((await panel.locator('.ai-exchange').innerText()).includes('Notes about this template (they say what belongs'), '“Labels then AI” gives the AI the notes too, telling it to copy values')
+  await panel.getByRole('radio', { name: 'Labels then AI writes' }).click()
+  await panel.locator('.template-ai').getByText(/suggested \d+ of/).waitFor({ timeout: 30_000 })
   await panel.screenshot({ path: `${shots}template-write.png`, fullPage: true })
   await panel.getByRole('radio', { name: 'Labels then AI', exact: true }).click()
   await panel.locator('.template-ai').getByText(/suggested 2 of/).waitFor({ timeout: 30_000 })
@@ -267,7 +283,7 @@ try {
   console.log(`  ${summaryLine}`)
   await panel.screenshot({ path: `${shots}template-review.png`, fullPage: true })
   await panel.getByRole('button', { name: 'Create page' }).click()
-  await panel.getByText('Page created').waitFor({ timeout: 90_000 })
+  await panel.getByText('Page created', { exact: true }).waitFor({ timeout: 90_000 })
   const goblinId = resourceIdFrom(await panel.getByRole('link', { name: 'Open in LegendKeeper' }).getAttribute('href'))
   const goblinRes = await lk.resources.get({ resourceId: goblinId })
   const goblinPage = await readPage(goblinId)
@@ -277,7 +293,11 @@ try {
   check((goblinRes.tags ?? []).includes('Statblock') && goblinRes.parentId === run.resource.id, 'the page was made from the Statblock Template under the run page')
   check(goblinText.includes('Armour Class: 15 (leather armor, shield)') && goblinText.includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the infobox holds the AC and the AI’s creature type')
   check(!goblinJson.includes('Bonus Actions') && !goblinText.includes('[Description text]'), 'unfilled fields were removed')
-  check(!goblinText.includes('Immunities: +2') && goblinText.includes('Initiative: +2'), 'the flagged slip stayed out of the page; the worked-out Initiative went in')
+  check(!goblinText.includes('Immunities: +2') && goblinText.includes('Initiative: +2 (12)'), 'the flagged slip stayed out of the page; the worked-out Initiative went in')
+  check(headingText(goblinPage.blocks[0]).startsWith('From '), 'the “From” credit is at the top of the page')
+  check(['Small', 'Humanoid', 'Neutral Evil', 'CR 1/4', 'Statblock'].every((tag) => (goblinRes.tags ?? []).includes(tag)), `the size, type, alignment and CR tags were added to the template's (${(goblinRes.tags ?? []).join(', ')})`)
+  const relabelled = mentions(goblinPage.blocks).filter((m) => m.text !== undefined && m.text !== index.get(m.resourceId)?.name)
+  check(relabelled.length === 0, `with exact names only, every link's text is its page's name, so LegendKeeper shows the clip's own words${relabelled.length ? `: ${relabelled.map((m) => m.text).join(', ')}` : ''}`)
   const field = (title: string) => goblinPage.blocks.find((b) => b.kind === 'textField' && b.title === title)
   check(blockText(field('Legendary Actions') as AnyBlock).startsWith('Shortbow.'), 'the manual choice went into Legendary Actions, with its name')
   check(blockText(field('Actions') as AnyBlock).startsWith('Scimitar.') && !blockText(field('Actions') as AnyBlock).includes('Shortbow'), 'Actions kept the rest of its section')
@@ -289,9 +309,9 @@ try {
   await panel.getByText('Add a “From <Source>” heading').click()
   const before = (await readPage(newPageId)).blocks.length
   await panel.getByRole('button', { name: 'Add to page' }).click()
-  await panel.getByText('Added to the page').waitFor({ timeout: 60_000 })
+  await panel.getByText('Added to the page', { exact: true }).waitFor({ timeout: 60_000 })
   const appendedTail = (await readPage(newPageId)).blocks.slice(before)
-  check(appendedTail[0]?.kind === 'rule' && appendedTail[1]?.kind === 'infobox', 'the template went below the existing content, after a divider')
+  check(appendedTail[0]?.kind === 'rule' && appendedTail[1]?.kind === 'infobox', `the template went below the existing content, after a divider (${before} blocks before; then ${kinds(appendedTail.slice(0, 3)).join(', ')})`)
   check(!appendedTail.some((b) => headingText(b).startsWith('From ')), 'no “From” heading when the credit is off')
 
   await panel.locator('#open-settings').click()
@@ -305,6 +325,13 @@ try {
   check(true, 'notes for a template can be written in Settings, replacing the built-in ones')
   await notesField.getByRole('button', { name: 'Remove your notes' }).click()
   await notesField.getByText('Using the built-in “D&D 5e stat block” notes').waitFor()
+  await notesField.getByRole('button', { name: 'Suggest notes with AI' }).click()
+  await notesField.getByText(/suggested these notes, using “Goblin” as an example clip/).waitFor({ timeout: 30_000 })
+  check((await notesField.locator('textarea').inputValue()).startsWith('A creature stat block (stand-in notes).'), 'the AI’s suggested notes appear in the box, from the template and the open clip')
+  await panel.screenshot({ path: `${shots}notes-suggested.png`, fullPage: true })
+  await notesField.getByRole('button', { name: 'Discard' }).click()
+  await notesField.getByText('Using the built-in “D&D 5e stat block” notes').waitFor()
+  check(true, 'a suggestion is only saved when you save it; Discard goes back')
 } catch (error) {
   failures++
   console.log(`  ✘ ${error instanceof Error ? error.message.split('\n')[0] : error}`)

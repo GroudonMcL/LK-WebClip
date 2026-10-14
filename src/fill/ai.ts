@@ -86,7 +86,9 @@ export interface AiInput {
   nameOf?: (resourceId: string) => string | undefined
   /** What the clip says about each block (FillPlan.blockLabels), shown to the model with the block. */
   labels?: Map<number, BlockLabels>
-  /** "Labels then AI writes": short fields may be written, guided by these notes about the template. */
+  /** Notes about the template (what belongs in each field, and how it is written), for every mode. */
+  notes?: string
+  /** "Labels then AI writes": short fields may be written. `notes` here is the older place for the notes. */
   write?: { notes?: string }
 }
 
@@ -94,10 +96,10 @@ export function buildAiJob(input: AiInput, limits: { maxChars?: number; maxBlock
   return withNames(input.nameOf, () => job(input, limits))
 }
 
-function job({ slots, clip, blockIndexes, title, labels, write }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
+function job({ slots, clip, blockIndexes, title, labels, write, notes: givenNotes }: AiInput, { maxChars = 12_000, maxBlockChars = 600 }: { maxChars?: number; maxBlockChars?: number }): AiJob | undefined {
   if (slots.length === 0 || blockIndexes.length === 0) return undefined
   // The notes share the model's window with the clip.
-  const notes = write?.notes?.trim() ?? ''
+  const notes = (givenNotes ?? write?.notes)?.trim() ?? ''
   maxChars = Math.max(1000, maxChars - notes.length)
   const blocks = new Map<number, number>()
   const lines: string[] = []
@@ -144,7 +146,8 @@ function job({ slots, clip, blockIndexes, title, labels, write }: AiInput, { max
   const prompt = [
     `Page name: ${title}`,
     '',
-    ...(notes ? ['Notes about this template:', notes, ''] : []),
+    // When the AI only picks, the notes say where things belong; values are still copied as the clip has them.
+    ...(notes ? [write ? 'Notes about this template:' : 'Notes about this template (they say what belongs in each field; copy values as the clip has them, never reformat):', notes, ''] : []),
     'Clip blocks:',
     ...lines,
     '',

@@ -67,6 +67,8 @@ export interface TemplateImport {
   plan: FillPlan
   /** Keep the template's placeholders in slots nothing was found for; otherwise remove those slots. */
   keepUnfilled: boolean
+  /** Tags to add to the page (a stat block's size, type, alignment and CR). */
+  tags?: string[]
 }
 
 export interface ImportOptions {
@@ -88,6 +90,8 @@ export interface ImportResult {
   sourceCreated: boolean
   /** Template slots the new page didn't have (the template changed while the clip was open). */
   templateMissing: string[]
+  /** Tags added to the page. */
+  tagsAdded: string[]
   imagesUploaded: number
   imagesFailed: { src: string; reason: string }[]
   /** Opens the page in the LegendKeeper app. */
@@ -170,12 +174,27 @@ export async function importClip(lk: LegendKeeper, index: ProjectIndex, plan: Cl
     await appendToDocument(lk, ref, appendedClip(source?.id, content))
   }
 
+  // 4. Tags, added to the ones the page has (a new page has the template's).
+  let tagsAdded: string[] = []
+  if (template?.tags?.length) {
+    progress('Adding tags…')
+    const current = (await lk.resources.get({ resourceId: ref.resourceId })).tags ?? []
+    tagsAdded = template.tags.filter((tag) => !current.includes(tag))
+    if (tagsAdded.length > 0) {
+      const tags = [...current, ...tagsAdded]
+      await lk.resources.update({ resourceId: ref.resourceId }, { tags })
+      const indexed = index.get(ref.resourceId)
+      if (indexed) index.upsert({ ...indexed, tags })
+    }
+  }
+
   return {
     resourceId: ref.resourceId,
     documentId: ref.documentId,
     source,
     sourceCreated,
     templateMissing,
+    tagsAdded,
     imagesUploaded: images.length - imagesFailed.length,
     imagesFailed,
     url: appUrl(project.id, ref.resourceId),
