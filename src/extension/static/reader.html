@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LK Reader</title>
+  <link rel="stylesheet" href="reader.css">
+</head>
+<body>
+  <header class="bar">
+    <img src="icons/icon-32.png" alt="" width="20" height="20">
+    <div class="bar-text">
+      <h1 id="book-title">LK Reader</h1>
+      <span id="status"></span>
+    </div>
+    <button id="open-file" type="button" title="Open another PDF from your computer">Open PDF…</button>
+    <button id="toggle-styles" type="button" title="Correct which text styles are headings" disabled>Headings</button>
+    <button id="send" type="button" class="primary" title="Send the selected text to LegendKeeper" disabled>Send selection</button>
+    <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+  </header>
+  <main id="main">
+    <div id="pages" class="pane" aria-label="Original pages"></div>
+    <div id="text" class="pane"><article id="flow"></article></div>
+    <aside id="styles" class="pane" hidden aria-label="Text styles"></aside>
+  </main>
+  <div id="drop" class="drop" hidden>
+    <div class="drop-box">
+      <p id="drop-message"></p>
+      <p><strong>Drop a PDF here</strong>, or <button id="choose-file" type="button" class="link">choose one</button>.</p>
+    </div>
+  </div>
+  <script type="module" src="reader.js"></script>
+</body>
+</html>

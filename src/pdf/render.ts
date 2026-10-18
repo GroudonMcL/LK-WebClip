@@ -9,8 +9,17 @@ export interface RenderOptions {
   pageImage?: (page: number) => string | undefined
 }
 
-/** Reflowed blocks as HTML: the right-hand pane, and what a selection is clipped from. */
-export function blocksToHtml(blocks: ReflowBlock[], imageSrc: RenderOptions['imageSrc']): string {
+export interface HtmlOptions {
+  /** The label of the button on each stat block. */
+  statblockButton?: string
+}
+
+/**
+ * Reflowed blocks as HTML: the right-hand pane, and what a selection is clipped from. Every block
+ * carries `data-boxes` (where it sits on the pages) and each image `data-pdf-image="page:id"`, so
+ * a reader can highlight blocks and load images when they come into view.
+ */
+export function blocksToHtml(blocks: ReflowBlock[], imageSrc: RenderOptions['imageSrc'], options: HtmlOptions = {}): string {
   const out: string[] = []
   let page = 0
   for (let i = 0; i < blocks.length; i++) {
@@ -30,12 +39,12 @@ export function blocksToHtml(blocks: ReflowBlock[], imageSrc: RenderOptions['ima
       out.push(`<ul>${items.join('')}</ul>`)
       continue
     }
-    out.push(blockHtml(b, imageSrc))
+    out.push(blockHtml(b, imageSrc, options))
   }
   return out.join('\n')
 }
 
-function blockHtml(b: ReflowBlock, imageSrc: RenderOptions['imageSrc']): string {
+function blockHtml(b: ReflowBlock, imageSrc: RenderOptions['imageSrc'], options: HtmlOptions): string {
   switch (b.type) {
     case 'heading': return `<h${b.level}${attrs(b)}>${esc(b.text)}</h${b.level}>`
     case 'paragraph': {
@@ -51,11 +60,12 @@ function blockHtml(b: ReflowBlock, imageSrc: RenderOptions['imageSrc']): string 
     }
     case 'image': {
       const src = imageSrc(b.page, b.id)
-      return src ? `<figure${attrs(b)}><img src="${esc(src)}" alt="" width="${b.width}" height="${b.height}"></figure>` : ''
+      return src === undefined ? '' : `<figure${attrs(b)}><img${src ? ` src="${esc(src)}"` : ''} data-pdf-image="${b.page}:${esc(b.id)}" alt="" width="${b.width}" height="${b.height}"></figure>`
     }
     case 'statblock': {
-      const inner = blocksToHtml(b.blocks, imageSrc).replace(/<div class="page-marker"[^>]*>.*?<\/div>\n?/g, '')
-      return `<section class="statblock"${attrs(b)}><button type="button" class="clip-statblock" title="Select this stat block">Select stat block</button>${inner}</section>`
+      const inner = blocksToHtml(b.blocks, imageSrc, options).replace(/<div class="page-marker"[^>]*>.*?<\/div>\n?/g, '')
+      const label = options.statblockButton ?? 'Select stat block'
+      return `<section class="statblock"${attrs(b)}><button type="button" class="clip-statblock" title="${esc(label)}">${esc(label)}</button>${inner}</section>`
     }
   }
 }

@@ -135,3 +135,14 @@ describe('pickImages', () => {
     assert.deepEqual(pickImages(pages).map((i) => `${i.page}:${i.id}`), ['1:art'])
   })
 })
+
+describe('isPdfUrl', () => {
+  it('spots PDFs by their path, on the web and on disk', async () => {
+    const { isPdfUrl } = await import('../src/extension/tabCapture.js')
+    assert.equal(isPdfUrl('https://example.com/books/tomb.pdf'), true)
+    assert.equal(isPdfUrl('https://example.com/books/TOMB.PDF?download=1'), true)
+    assert.equal(isPdfUrl('file:///C:/Users/me/Downloads/The_Forgotten_Tomb_of_Acererak.pdf'), true)
+    assert.equal(isPdfUrl('https://example.com/pdf-guide'), false)
+    assert.equal(isPdfUrl(undefined), false)
+  })
+})

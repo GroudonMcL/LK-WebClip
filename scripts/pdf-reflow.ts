@@ -13,7 +13,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { extractPage } from '../src/pdf/extract.js'
+import { extractPage, pageImage, type PdfImageData } from '../src/pdf/extract.js'
 import { reflow, pickImages, type ReflowOptions } from '../src/pdf/reflow.js'
 import { renderReader } from '../src/pdf/render.js'
 import type { PageContent } from '../src/pdf/types.js'
@@ -52,12 +52,10 @@ const imageFiles = new Map<string, string>()
 for (const image of pickImages(pages)) {
   const page = pdfPages.get(image.page)
   if (!page) continue
-  const data = await new Promise<PdfjsImage | null>((resolve) => {
-    try { page.objs.get(image.id, resolve) } catch { resolve(null) }
-  })
+  const data = await pageImage(page, OPS as unknown as Record<string, number>, image)
   if (!data?.data) continue
   const name = `img/p${image.page}-${image.id.replace(/\W/g, '_')}.png`
-  await writeFile(join(out, name), encodePng(data))
+  await writeFile(join(out, name), encodePng({ ...data, data: data.data }))
   imageFiles.set(`${image.page}:${image.id}`, name)
 }
 
@@ -82,10 +80,8 @@ await writeFile(join(out, 'styles.json'), JSON.stringify(result.styles, null, 2)
 console.log(`Reflowed ${pages.length} pages into ${join(out, 'index.html')}`)
 console.log(`Detected text styles (edit and pass with --styles to correct them): ${join(out, 'styles.json')}`)
 
-interface PdfjsImage { width: number; height: number; kind: number; data: Uint8ClampedArray | Uint8Array }
-
 /** Minimal PNG encoder for pdf.js image data (1 bpp grey, RGB or RGBA). */
-function encodePng(img: PdfjsImage): Buffer {
+function encodePng(img: PdfImageData & { data: Uint8ClampedArray | Uint8Array }): Buffer {
   const { width, height, kind, data } = img
   const rgba = Buffer.alloc(width * height * 4)
   if (kind === 3) rgba.set(data.subarray(0, rgba.length))

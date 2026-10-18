@@ -29,7 +29,7 @@ import {
   DEFAULT_SETTINGS, getPendingCapture, loadCachedIndex, loadRemembered, loadSettings, saveCachedIndex, saveRemembered, saveSettings,
   type AiEngineChoice, type PendingCapture, type ProjectSettings, type Settings,
 } from './state.js'
-import { captureTab } from './tabCapture.js'
+import { captureTab, isPdfUrl, openReader } from './tabCapture.js'
 
 const INDEX_MAX_AGE_MS = 10 * 60 * 1000
 /** Refreshes asked for by search (pages the list lacks) are at most this frequent. */
@@ -1027,7 +1027,15 @@ function captureEmpty(error?: string): HTMLElement {
     el('p', {}, 'Select something on a web page, right-click it and choose ', el('strong', {}, 'Send to LegendKeeper'), '.'),
     el('p', { class: 'muted' }, 'Right-click an image or a link to clip just that.'),
     el('button', { type: 'button', onclick: () => void clipActiveTab('article') }, 'Clip this page’s article'),
+    el('p', { class: 'muted' }, 'PDFs open in the LK Reader, where you can clip them like a web page.'),
+    el('button', { type: 'button', onclick: () => void openPdfReader() }, 'Open a PDF in LK Reader'),
   )
+}
+
+/** Opens the reader on the PDF in the active tab, or empty to choose a file. */
+async function openPdfReader(): Promise<void> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  await openReader(isPdfUrl(tab?.url) ? tab?.url : undefined, tab?.id)
 }
 
 function captureCard(capture: Capture): HTMLElement {

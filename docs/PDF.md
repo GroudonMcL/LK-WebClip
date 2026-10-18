@@ -35,9 +35,20 @@ Known gaps:
 - Three-column layouts are read as one or two columns.
 - Every publisher's fonts differ, so other books may need style corrections.
 
-## Next
+## The reader (done, 0.6.0)
 
-1. Reader page in the extension: pdf.js renders pages on the left (canvas) and the reflowed text on the right, using `extractPage` and `reflow` directly.
-2. Right-click **Open in LK Reader** on PDF tabs, plus drag-and-drop and a file picker.
-3. Clipping from the reader: a selection or a stat block goes to the side panel like a web clip, and images go to the asset library as `data:` images.
-4. Style corrections in the reader's UI, saved per book.
+`reader.html` in the extension (`src/extension/reader.ts`).
+
+- **Opening:** **Open in LK Reader** on the right-click menu of PDF tabs, and **Open PDF in LK Reader** on links to PDFs (both limited to `.pdf` URLs). **Send to LegendKeeper** on a PDF tab opens the reader as well, in case Chrome doesn't show the first item in its viewer. The side panel has **Open a PDF in LK Reader**, and the reader takes dropped files and has a file picker. `file:///` URLs need **Allow access to file URLs**; without it the reader explains how to turn it on and offers the drop zone.
+- **Loading:** text is read page by page in the background. The reflowed text appears after the first 6 pages and is reflowed again every 20 pages and at the end, keeping your place. Page renders (left) are drawn only near the scroll position and dropped when far away. Images are decoded when they scroll into view.
+- **Images:** pdf.js names images afresh each time it reads a page and only hands over an image's pixels the first time, so images are found again by position. They come from a second copy of the PDF, which is replaced every 16 pages so it doesn't hold every decoded image. They're shown and clipped as WebP (small, keeps transparency).
+- **Clipping:** the web capture code runs on the reflowed HTML, so a PDF clip is an ordinary clip to the side panel. Extensions can't inject scripts into their own pages, so a clip from a reader tab (the context menu, or **Use the whole article instead**) is asked of the page by message. Each reader tab registers itself in session storage for this.
+- **Text styles:** **Headings** lists every font and size with an example, and its role (Heading 1–4, Text, Leave out). Corrections are saved per PDF (by its fingerprint) in local storage.
+- **pdf.js:** the extension uses pdf.js's legacy build: the current build relies on JavaScript newer than many Chrome versions have.
+
+`npm run reader:check -- book.pdf` loads the built extension in Chromium and checks the reader end to end without a LegendKeeper project.
+
+## Later
+
+- Searching the whole book.
+- Better handling of the known gaps above (interrupted paragraphs, centred text, three columns).

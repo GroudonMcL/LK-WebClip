@@ -16,7 +16,7 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 | 3 | Fuzzy search, linking page names in the text, ambiguity handling, keeping the page list fresh | **Done.** See [docs/PHASE3.md](docs/PHASE3.md) |
 | 4 | Template filling: fill your LegendKeeper templates from a clip, by label matching and optional AI | **Done.** See [docs/PHASE4.md](docs/PHASE4.md) |
 | 5 | Complex tables, site-specific rules, Source deduplication | Next |
-| PDF | Reader page for PDFs: reflow two-column books into clean, clippable text | **Prototype.** See [docs/PDF.md](docs/PDF.md) |
+| PDF | LK Reader: open PDFs side by side with clean, clippable text | **Done.** See [docs/PDF.md](docs/PDF.md) |
 | 6 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
 ## Install
@@ -32,6 +32,11 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 - **Selection:** highlight text (with any images, tables and links in it), right-click and choose **Send to LegendKeeper**.
 - **Image or link:** right-click it and choose **Send to LegendKeeper**.
 - **Whole article:** right-click empty space on the page and choose **Send to LegendKeeper**, or click **Clip this page’s article** in the panel. From a selection, **Use the whole article instead** switches to the full article.
+- **PDFs:** Chrome's PDF viewer can't be read by extensions, so PDFs open in the **LK Reader**: right-click a PDF (or a link to one) and choose **Open in LK Reader**, or click **Open a PDF in LK Reader** in the panel and drop a file on it. Choosing **Send to LegendKeeper** on a PDF opens the reader too.
+  - The original pages are on the left and a clean copy of the text on the right, with two-column pages put back into reading order. Hover over or click a paragraph to see where it is on the page; click a page to find its text.
+  - Select text and right-click **Send to LegendKeeper** (or click **Send selection**). Each stat block has its own **Send to LegendKeeper** button. Clipping with nothing selected takes the PDF page in view. Images go along and are copied into your asset library. The Source defaults to the book's title.
+  - **Headings** lists the PDF's text styles. If a heading came out as plain text (or the other way round), change its style there; corrections are remembered for that PDF.
+  - To open PDFs saved on your computer from their tab, turn on **Allow access to file URLs** on the extension's details page in `chrome://extensions`. Dropping the file on the reader works without it.
 
 Then in the panel:
 
@@ -114,6 +119,8 @@ npm test                  # offline unit tests (converter, link resolution, inde
 npm run typecheck
 npm run build             # the extension, into dist/extension (add -- --zip for a zip)
 npm run e2e               # loads the built extension in Chromium and clips into your project
+npm run reader:check -- book.pdf   # opens a PDF in the built extension's reader and checks text, images and clipping (no API key needed)
+npm run pdf:reflow -- book.pdf     # writes a side-by-side HTML of a PDF's reflowed text, for tuning the reflow rules
 npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
 npm run phase4:templates  # fills the project's Statblock and God templates from real clips (AI cases need OPENROUTER_API_KEY)
 npm run eval:ai           # scores the AI's fills of saved clips: right, missed, caught by the checks, wrong (needs OPENROUTER_API_KEY; --no-notes to compare without the template notes)
@@ -126,7 +133,8 @@ The live checks write only under the page **LK Web Clipper Sandbox** and never d
 src/lk/          LegendKeeper integration: client, project index, search, Sources, pages, templates, images, errors
 src/clip/        HTML → LegendKeeper blocks, link resolution, preview rendering, the import pipeline
 src/fill/        Template filling: slots, clip candidates, label matching, AI jobs and engines, composing the page
-src/extension/   The Chrome extension: background worker, capture script, side panel
+src/pdf/         PDF reading: pdf.js extraction, reflow into reading order, HTML for the reader
+src/extension/   The Chrome extension: background worker, capture script, side panel, PDF reader
 scripts/         Build, end-to-end test and live checks
 test/            Unit tests and the HTML fixture
 docs/            Phase notes, the Phase 1 output and side-panel screenshots

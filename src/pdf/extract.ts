@@ -1,5 +1,5 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
-import type { PageContent, PdfImage, PdfShape, PdfText } from './types.js'
+import type { Box, PageContent, PdfImage, PdfShape, PdfText } from './types.js'
 
 /**
  * Reads one PDF page with pdf.js into positioned text, filled shapes and images.
@@ -53,7 +53,12 @@ export async function extractPage(page: PDFPageProxy, ops: Record<string, number
     })
   }
 
-  // Walk the drawing operators, tracking the transform, to place images and filled shapes.
+  const { images, shapes } = placeDrawing(operators, ops, height)
+  return { number: page.pageNumber, width, height, text, shapes, images }
+}
+
+/** Walks the drawing operators, tracking the transform, to place images and filled shapes. */
+function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, ops: Record<string, number>, height: number): { images: PdfImage[]; shapes: PdfShape[] } {
   const names = new Map(Object.entries(ops).map(([k, v]) => [v, k]))
   const images: PdfImage[] = []
   const shapes: PdfShape[] = []
@@ -95,7 +100,7 @@ export async function extractPage(page: PDFPageProxy, ops: Record<string, number
     }
   })
 
-  return { number: page.pageNumber, width, height, text, shapes, images }
+  return { images, shapes }
 }
 
 type Matrix = [number, number, number, number, number, number]
@@ -120,4 +125,35 @@ function transformBox(m: Matrix, [x0, y0, x1, y1]: [number, number, number, numb
 
 function toTopDown(box: { x0: number; y0: number; x1: number; y1: number }, height: number) {
   return { x0: box.x0, x1: box.x1, y0: height - box.y1, y1: height - box.y0 }
+}
+
+/** An image's pixels as pdf.js decoded them: an ImageBitmap in browsers, raw bytes in Node. */
+export interface PdfImageData {
+  width: number
+  height: number
+  /** 1: 1 bit per pixel grey, 2: RGB, 3: RGBA. */
+  kind?: number
+  data?: Uint8ClampedArray | Uint8Array
+  bitmap?: ImageBitmap
+}
+
+/**
+ * Decodes one of a page's images. pdf.js names images afresh each time it reads a page, so the image
+ * is found again by where it is drawn (the last one drawn there, as `pickImages` keeps).
+ */
+export async function pageImage(page: PDFPageProxy, ops: Record<string, number>, image: Box): Promise<PdfImageData | null> {
+  const operators = await page.getOperatorList()
+  const height = page.getViewport({ scale: 1 }).height
+  const near = (a: number, b: number) => Math.abs(a - b) < 1
+  const found = placeDrawing(operators, ops, height).images.filter((i) => near(i.x0, image.x0) && near(i.y0, image.y0) && near(i.x1, image.x1) && near(i.y1, image.y1)).at(-1)
+  if (!found) return null
+  // Images shared between pages live in the document's common objects.
+  const objs = found.id.startsWith('g_') ? page.commonObjs : page.objs
+  return new Promise((resolve) => {
+    try {
+      objs.get(found.id, (data: unknown) => resolve((data as PdfImageData | undefined) ?? null))
+    } catch {
+      resolve(null)
+    }
+  })
 }
