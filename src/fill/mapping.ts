@@ -1,6 +1,6 @@
 import type { Block, Run } from '@legendkeeper/sdk/blocks'
 import { leftoverEntries, overlaps, splitRuns, type Candidate } from './candidates.js'
-import { compareLabels, Synonyms } from './labels.js'
+import { cleanLabel, compareLabels, Synonyms } from './labels.js'
 import { valueFor, type FillPlan, type SavedRule, type SlotOrigin, type SlotState } from './plan.js'
 import { blockText, blocksToRuns, mentionsIn, runsText, withNames, type AnyBlock, type Slot, type SlotFill } from './template.js'
 
@@ -126,7 +126,7 @@ export const SHORT_CHARS = 300
 
 // ------------------------------------------------------------------------------------- base
 
-export function buildMapBase(plan: FillPlan, clip: Block[], context: { key: string; names?: Record<string, string>; synonyms: string[][] }): MapBase {
+export function buildMapBase(plan: FillPlan, clip: Block[], context: { key: string; names?: Record<string, string>; synonyms: string[][]; title?: string }): MapBase {
   const names = context.names ?? {}
   return withNames((id) => names[id], () => {
     const cards: Card[] = []
@@ -140,9 +140,13 @@ export function buildMapBase(plan: FillPlan, clip: Block[], context: { key: stri
     const isTitle = (units: string[]) => units.some((u) => title.has(blockOf(u) ?? -1))
 
     // 1. Labelled values and images. Overlapping candidates ("STR" as a pair and as a section) give one card.
+    //    A bold page name starting a paragraph ("**Aurelion** is the god of…") is prose, not a label.
+    const titleKey = cleanLabel(context.title ?? '')
     const pairs: Candidate[] = []
     for (const c of plan.extraction.candidates) {
-      if (c.kind === 'section' || c.entry || c.units.length === 0 || isTitle(c.units)) continue
+      if (c.kind === 'section' || c.entry || isTitle(c.units) || (titleKey && c.kind === 'pair' && c.key === titleKey)) continue
+      // An image inside a table has no part of its own; it is still a card.
+      if (c.units.length === 0 && c.kind !== 'image') continue
       if (pairs.some((p) => overlaps(p.units, c.units))) continue
       pairs.push(c)
     }

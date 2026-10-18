@@ -31,13 +31,15 @@ const clips = {
   assassin: { clip: blocks(fixture('dndbeyond-assassin.html')), title: 'Assassin', tpl: statblock, name: 'Statblock Template' },
   zombie: { clip: blocks(fixture('wiki-zombie.html')), title: 'Zombie', tpl: statblock, name: 'Statblock Template' },
   bard: { clip: blocks(fixture('dndbeyond-bard.html')), title: 'Bard', tpl: classTemplate, name: 'Class Template' },
+  wiki: { clip: blocks(fixture('wiki-infobox.html')), title: 'Aurelion', tpl: template('God_Template'), name: 'God Template' },
+  article: { clip: blocks(fixture('plain-article.html')), title: 'Saltmere', tpl: template('Other_Location_Template'), name: 'Other Location Template' },
 }
 type ClipName = keyof typeof clips
 
 function setup(name: ClipName, overrides: Partial<FillInput> = {}): { plan: FillPlan; base: MapBase; mapping: Mapping } {
   const c = clips[name]
   const plan = planFill({ tree: c.tpl.tree, templateId: c.tpl.id, templateName: c.name, clip: c.clip, title: c.title, site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, ...overrides })
-  const base = buildMapBase(plan, overrides.clip ?? c.clip, { key: name, synonyms: DEFAULT_SYNONYMS })
+  const base = buildMapBase(plan, overrides.clip ?? c.clip, { key: name, synonyms: DEFAULT_SYNONYMS, title: c.title })
   return { plan, base, mapping: initialMapping(base) }
 }
 const slotId = (base: MapBase, label: string) => base.slots.find((s) => s.slot.label === label)!.slot.id
@@ -74,7 +76,7 @@ describe('mapper: with nothing moved', () => {
     })
   }
 
-  for (const name of ['goblin', 'assassin', 'zombie'] as ClipName[]) {
+  for (const name of ['goblin', 'assassin', 'zombie', 'article'] as ClipName[]) {
     it(`rebuilds every slot from its cards to the same page (${name})`, () => {
       const { plan, base, mapping } = setup(name)
       const all = { ...mapping, touched: base.slots.filter((s) => FILLABLE.has(s.slot.kind)).map((s) => s.slot.id) }
@@ -304,6 +306,56 @@ describe('mapper: ties, AI answers and rules', () => {
     const mapped = mappedPlan(plan, base, m)
     assert.equal(mapped.slots.find((s) => s.slot.label === 'Legendary Actions')!.status, 'filled')
     assert.equal(mapped.slots.find((s) => s.slot.label === 'Hit Points'), plan.slots.find((s) => s.slot.label === 'Hit Points'), 'untouched slots are the plan’s own')
+  })
+})
+
+describe('mapper: a wiki page with an infobox, and a plain article', () => {
+  it('fills the infobox rows by label, and keeps the rest as cards', () => {
+    const { base, mapping } = setup('wiki')
+    for (const [label, value] of [['Alignment', 'Neutral good'], ['Portfolio', 'Dawn, renewal, travellers'], ['Pantheon', 'The Bright Circle'], ['Weapon', 'Spear']]) {
+      assert.equal(resultSlot(base, mapping, label!).text, value)
+    }
+    assert.equal(resultSlot(base, mapping, 'Image').status, 'filled', 'the infobox image goes in the image field')
+    assert.ok(base.cards.some((c) => c.listed && c.kind === 'image'), 'and is a card')
+    const intro = base.cards.find((c) => c.listed && c.text.startsWith('Aurelion is the god'))!
+    assert.equal(intro.kind, 'block', 'a bold page name starting a paragraph is not a label')
+  })
+
+  it('shows the rows label matching added to a list, and sends them back to the unused content if you change that list', () => {
+    const { plan, base, mapping } = setup('wiki')
+    assert.deepEqual(plan.extraRows.map((r) => r.label), ['Symbol'])
+    const weapon = base.slots.find((s) => s.slot.label === 'Weapon')!
+    assert.ok(weapon.fill && 'runs' in weapon.fill && weapon.fill.extraRows?.length === 1)
+    const symbol = base.cards.find((c) => c.kind === 'pair' && c.label === 'Symbol')!
+    assert.equal(placements(base, mapping, applyMapping(base, mapping)).slotOf.get(symbol.id), weapon.slot.id, 'the row shows as used by that list')
+    const m = place(base, mapping, base.cards.find((c) => c.kind === 'pair' && c.label === 'Weapon')!.id, weapon.slot.id)
+    const changed = mappedPlan(plan, base, m)
+    assert.deepEqual(changed.extraRows, [])
+    assert.match(text(changed.leftovers), /A rising sun over a road/)
+  })
+
+  it('takes a row and a section where you put them, keeping a label that differs from the field’s', () => {
+    const { base, mapping } = setup('wiki')
+    const symbol = base.cards.find((c) => c.kind === 'pair' && c.label === 'Symbol')!
+    let m = place(base, mapping, symbol.id, slotId(base, 'Holy symbol description'))
+    assert.equal(resultSlot(base, m, 'Holy symbol description').text, 'Symbol A rising sun over a road')
+    assert.ok(canRemember(base, m, slotId(base, 'Holy symbol description')))
+    const dogma = base.cards.find((c) => c.kind === 'section' && c.label === 'Dogma')!
+    m = place(base, m, dogma.id, slotId(base, 'Manifesto, Dogma, or Quote'))
+    assert.match(resultSlot(base, m, 'Manifesto, Dogma, or Quote').text, /^Every dawn is a second chance/)
+    assert.ok(!text(applyMapping(base, m).leftovers).includes('Dogma'), 'its heading isn’t repeated')
+  })
+
+  it('leaves a clip with no labels for you to place, and offers no rules for prose', () => {
+    const { base, mapping } = setup('article')
+    const result = applyMapping(base, mapping)
+    assert.equal(summarize(result).filled, 0)
+    assert.equal(placements(base, mapping, result).unused.length, 4, 'three paragraphs and a list')
+    const first = base.cards.find((c) => c.listed && c.text.startsWith('The harbour town'))!
+    const m = place(base, mapping, first.id, slotId(base, 'Overview'))
+    assert.match(resultSlot(base, m, 'Overview').text, /^The harbour town/)
+    assert.ok(!canRemember(base, m, slotId(base, 'Overview')))
+    assert.equal(applyMapping(base, m).leftovers.length, 3)
   })
 })
 

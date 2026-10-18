@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LK Mapper</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <link rel="stylesheet" href="mapper.css">
+</head>
+<body class="mapper">
+  <header class="bar mbar">
+    <img src="icons/icon-32.png" alt="" width="20" height="20">
+    <div class="bar-text">
+      <h1 id="m-title">Mapper</h1>
+      <span id="m-sub"></span>
+    </div>
+    <div id="m-counts" class="map-counts" aria-live="polite"></div>
+    <button id="m-undo" type="button" title="Undo the last change (Ctrl+Z)" disabled>Undo</button>
+    <button id="m-reset" type="button" title="Go back to what label matching found">Start again</button>
+    <button id="m-import" type="button" class="primary">Import</button>
+  </header>
+  <div id="m-status" class="m-status" role="status" aria-live="polite"></div>
+  <div id="m-app" class="mgrid">
+    <div id="m-clip" class="mcol" data-zone="unused" aria-label="The clip"></div>
+    <div id="m-wire" class="mcol" aria-label="The template"></div>
+    <div id="m-preview" class="mcol" aria-label="Preview"></div>
+    <div id="m-tray" class="mtray" data-zone="unused" aria-label="Unused"></div>
+  </div>
+  <button id="m-cut" type="button" class="m-cut" hidden>Make a card from the selection</button>
+  <div id="m-toast" class="toast" hidden></div>
+  <script type="module" src="mapper.js"></script>
+</body>
+</html>

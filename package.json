@@ -17,7 +17,8 @@
     "e2e": "node --env-file-if-exists=.env --import tsx scripts/e2e.ts",
     "eval:ai": "node --env-file-if-exists=.env --import tsx scripts/eval-ai.ts",
     "pdf:reflow": "node --import tsx scripts/pdf-reflow.ts",
-    "reader:check": "node --import tsx scripts/reader-check.ts"
+    "reader:check": "node --import tsx scripts/reader-check.ts",
+    "mapper:check": "node --import tsx scripts/mapper-check.ts"
   },
   "dependencies": {
     "@legendkeeper/sdk": "^4.1.0",

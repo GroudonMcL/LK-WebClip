@@ -15,16 +15,20 @@ import { suggestNotes } from '../fill/notesAi.js'
 import { appendTree, appendedTemplate, applyComposition, compose, type Composition } from '../fill/compose.js'
 import { AiUnavailableError, listFreeModels, ON_DEVICE_HELP, onDeviceStatus, OnDeviceEngine, OpenRouterEngine, suggest, type AiEngine, type FreeModel } from '../fill/engines.js'
 import { cleanLabel, DEFAULT_SYNONYMS, formatSynonyms, parseSynonyms, Synonyms } from '../fill/labels.js'
-import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillMode, type FillPlan, type SavedRule, type SlotOrigin, type SlotOverride, type SlotState } from '../fill/plan.js'
-import { FILLABLE } from '../fill/mapping.js'
-import { buildSlots, type Slot, type TemplateTree } from '../fill/template.js'
+import { blocksForAi, mergeRules, planFill, type AiSuggestion, type FillMode, type FillPlan, type SavedRule } from '../fill/plan.js'
+import { applyMapping, buildMapBase, carryOver, FILLABLE, initialMapping, mappedPlan, rulesFromMapping, summarize, type MapBase, type Mapping } from '../fill/mapping.js'
+import { buildSlots, mentionsIn, type Slot, type TemplateTree } from '../fill/template.js'
 import { parseTags, statblockTags, withProjectSpelling } from '../fill/tags.js'
 import { createClient } from '../lk/client.js'
 import { describeError, isNotFound } from '../lk/errors.js'
 import { ProjectIndex, writableDocuments, type IndexedResource } from '../lk/projectIndex.js'
 import { findSources, isSource, listSources, siteName, type SourceConfig } from '../lk/sources.js'
 import { fillPage, listTemplates, TemplateCache, TemplateFillError, type TemplateContent } from '../lk/templates.js'
-import { clear, el, timeAgo } from './dom.js'
+import { clear, debounce, el, timeAgo } from './dom.js'
+import {
+  IMPORT_CLAIM_KEY, IMPORT_KEY, MAPPING_KEY, PANEL_FORM_KEY, readSession, SESSION_KEY, STATUS_KEY, writeSession,
+  type ImportRequest, type ImportStatus, type MapperContext, type MapperSession, type MappingMessage,
+} from './mapperState.js'
 import { Picker } from './picker.js'
 import {
   DEFAULT_SETTINGS, getPendingCapture, loadCachedIndex, loadRemembered, loadSettings, saveCachedIndex, saveRemembered, saveSettings,
@@ -82,9 +86,15 @@ const state: {
   /** The chosen template's content, once read. */
   template?: TemplateContent
   templateLoading: boolean
+  /** What label matching (and the AI) found for the template. */
   fillPlan?: FillPlan
-  /** Choices made on the review screen, by slot id. */
-  fillOverrides: Record<string, SlotOverride>
+  /** The mapper's cards and slots for the fill plan, and the user's mapping of them. */
+  mapBase?: MapBase
+  mapping?: Mapping
+  /** The fill plan with the mapping applied: what the preview and the import use. */
+  mapped?: FillPlan
+  /** A mapping saved in the session by an earlier panel, for when this one was closed and opened again. */
+  restoredMapping?: MappingMessage
   /** The tags to add, as edited on the review screen; undefined uses the suggested ones. */
   tagsText?: string
   /** "Add rows the template lacks" was unticked on the review screen. */
@@ -97,7 +107,6 @@ const state: {
   indexLoading: false,
   linkChoices: {},
   templateLoading: false,
-  fillOverrides: {},
   ai: { status: 'idle' },
   form: { mode: 'new', title: '', sourceMode: 'website', websiteName: '', websiteReuse: true, newSourceName: '' },
   busy: false,
@@ -105,8 +114,8 @@ const state: {
 
 const templateCache = new TemplateCache()
 let onDevice: OnDeviceEngine | undefined
-/** Review rows whose value dropdown was opened with "Change". */
-const expandedSlots = new Set<string>()
+/** This panel, among any others open, for claiming an import the mapper asked for. */
+const panelId = crypto.randomUUID()
 addEventListener('pagehide', () => onDevice?.destroy())
 
 const context = () => ({ index: state.index, lk: state.lk, onMissing: () => void refreshIndex({ ifOlderThan: MIN_REFRESH_GAP_MS }) })
@@ -134,11 +143,21 @@ async function start(): Promise<void> {
   // A clip left over from long ago would look like a new one; start empty instead.
   const age = pending?.capture ? Date.now() - new Date(pending.capture.capturedAt).getTime() : 0
   state.pending = age < STALE_CAPTURE_MS ? pending : undefined
+  if (state.settings.templates.enabled) state.restoredMapping = await readSession<MappingMessage>(MAPPING_KEY)
   chrome.storage.session.onChanged.addListener((changes) => {
     if (changes.pendingCapture?.newValue) {
       state.pending = changes.pendingCapture.newValue as PendingCapture
       void onNewCapture()
     }
+    const mapping = changes[MAPPING_KEY]?.newValue as MappingMessage | undefined
+    if (mapping && mapping.key === state.mapBase?.key && JSON.stringify(mapping.mapping) !== JSON.stringify(state.mapping)) {
+      state.mapping = mapping.mapping
+      if (published) published.mapping = state.mapping
+      applyTheMapping()
+      update()
+    }
+    const request = changes[IMPORT_KEY]?.newValue as ImportRequest | undefined
+    if (request) void onImportRequest(request)
   })
   if (state.settings.projects.length === 0) return renderSettings()
   await selectProject(state.settings.activeProjectId ?? state.settings.projects[0]!.projectId)
@@ -213,12 +232,18 @@ async function onNewCapture(): Promise<void> {
   if (!state.project) return renderSettings()
   const capture = state.pending?.capture
   state.linkChoices = {}
-  state.fillOverrides = {}
   state.tagsText = undefined
   state.noExtraRows = undefined
   state.ai = { status: 'idle' }
-  expandedSlots.clear()
-  if (capture) {
+  state.mapBase = undefined
+  state.mapping = undefined
+  // Only with template filling on: the mapper tab may be in front, and a panel opened again should carry on.
+  const savedForm = state.settings.templates.enabled ? await readSession<{ captureId: string; form: Form; linkChoices: Record<string, string | null> }>(PANEL_FORM_KEY) : undefined
+  if (capture && savedForm && savedForm.captureId === state.pending?.id) {
+    // This panel was closed and opened again on the same clip: carry on where it was.
+    state.form = savedForm.form
+    state.linkChoices = savedForm.linkChoices
+  } else if (capture) {
     const remembered = await loadRemembered(state.project.projectId)
     const website = siteName({ url: capture.url, ...capture.meta })
     // The template last used with this Source (or this website, before it was a Source).
@@ -415,6 +440,7 @@ function rebuildPlan(): void {
     parser: new DOMParser(),
   })
   state.fillPlan = undefined
+  state.mapped = undefined
   const tree = templateTree()
   if (tree && state.template) {
     const t = state.settings.templates
@@ -430,17 +456,134 @@ function rebuildPlan(): void {
       // With label matching off and no AI, the template is created and the clip goes at the end.
       mode: mode ?? 'ai',
       ai: mode && mode !== 'labels' && state.ai.key === aiKey() ? state.ai.suggestions : undefined,
-      overrides: state.fillOverrides,
+      overrides: {},
       nameOf: (id) => state.index?.get(id)?.name,
       derived: parseDerived(t.derived),
       templateName: state.template.name,
       notes: aiNotes()?.text,
       extraRows: !state.noExtraRows,
     })
+    buildMapper(tree)
     void maybeRunAi()
   }
   update()
 }
+
+// ------------------------------------------------------------------------------------ mapper
+
+/** Makes the mapper's cards and slots for the new fill plan, keeping the user's changes to the mapping. */
+function buildMapper(tree: TemplateTree): void {
+  const capture = state.pending?.capture
+  if (!state.fillPlan || !state.template || !state.plan || !capture) return
+  const key = [state.pending?.id, state.template.id, state.template.updatedAt, state.form.mode].join('|')
+  const names: Record<string, string> = {}
+  for (const id of mentionsIn([...state.plan.blocks, ...tree.docs.flatMap((d) => d.blocks)])) {
+    const name = state.index?.get(id)?.name
+    if (name) names[id] = name
+  }
+  const base = buildMapBase(state.fillPlan, state.plan.blocks, { key, names, synonyms: state.settings.templates.synonyms, title: state.form.title.trim() || capture.suggestedTitle })
+  const previous = state.mapBase?.key === key ? state.mapping : state.restoredMapping?.key === key ? state.restoredMapping.mapping : undefined
+  state.mapBase = base
+  state.mapping = previous ? carryOver(previous, base) : initialMapping(base)
+  baseRev++
+  applyTheMapping()
+  publishMapper()
+}
+
+function applyTheMapping(): void {
+  if (!state.fillPlan || !state.mapBase || !state.mapping) return
+  state.mapped = mappedPlan(state.fillPlan, state.mapBase, state.mapping)
+}
+
+/** The fill plan as the mapper left it. */
+function filled(): FillPlan | undefined {
+  return state.mapped ?? state.fillPlan
+}
+
+/** What the mapper tab needs besides the cards: the template, the page name, the credit, what blocks the import. */
+function mapperContext(): MapperContext | undefined {
+  const capture = state.pending?.capture
+  const tree = templateTree()
+  if (!capture || !tree || !state.template || !state.project) return undefined
+  const source = chosenSource()
+  return {
+    title: state.form.mode === 'new' ? state.form.title.trim() || capture.suggestedTitle : (targetPicker?.value?.name ?? ''),
+    site: siteHost(capture.url),
+    templateName: state.template.name,
+    mode: state.form.mode,
+    tree,
+    keepUnfilled: state.settings.templates.keepUnfilled,
+    ...(state.settings.sourceHeading ? { sourceHeading: sourceHeadingPreview(source.label) } : {}),
+    importLabel: state.form.mode === 'new' ? 'Create page' : 'Add to page',
+    problems: importProblems(),
+    projectName: state.project.projectName,
+    clipUrl: capture.url,
+  }
+}
+
+/** Hands the cards, slots and mapping to the mapper tab (if it was opened for this clip). */
+const publishMapper = debounce(() => void writeMapperSession(), 250)
+let mapperKey: string | undefined
+let baseRev = 0
+/** What was last handed over, so a change that came from the mapper isn't sent back to it. */
+let published: { rev: number; mapping?: Mapping; context: string } | undefined
+
+async function writeMapperSession(force = false): Promise<boolean> {
+  const context = mapperContext()
+  if (!state.mapBase || !state.mapping || !context) return false
+  if (!force && mapperKey !== state.mapBase.key) return false
+  const contextJson = JSON.stringify(context)
+  if (!force && published?.rev === baseRev && published.mapping === state.mapping && published.context === contextJson) return true
+  const session: MapperSession = { key: state.mapBase.key, rev: baseRev, base: state.mapBase, mapping: state.mapping, context }
+  try {
+    await writeSession(SESSION_KEY, session)
+    if (published?.rev !== baseRev || force) await writeSession(MAPPING_KEY, { key: session.key, mapping: session.mapping } satisfies MappingMessage)
+    published = { rev: baseRev, mapping: state.mapping, context: contextJson }
+    mapperKey = session.key
+    return true
+  } catch (error) {
+    showToast(`The mapper can’t open this clip: ${error instanceof Error ? error.message : String(error)}`, 'error')
+    return false
+  }
+}
+
+/** Opens the mapper in its own tab, or brings back the one already open. */
+async function openMapper(): Promise<void> {
+  if (!(await writeMapperSession(true))) return
+  const url = chrome.runtime.getURL('mapper.html')
+  const open = (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB], documentUrls: [url] })).find((c) => c.tabId >= 0)
+  if (open) {
+    await chrome.tabs.update(open.tabId, { active: true })
+    await chrome.windows.update(open.windowId, { focused: true })
+    return
+  }
+  const [current] = await chrome.tabs.query({ active: true, currentWindow: true })
+  await chrome.tabs.create({ url, ...(current ? { index: current.index + 1, openerTabId: current.id } : {}) })
+}
+
+/** The mapper's Import button. A panel claims the request first, so it is imported once even with two panels open. */
+async function onImportRequest(request: ImportRequest): Promise<void> {
+  if (!state.mapBase || request.key !== state.mapBase.key || app.dataset.view !== 'main') return
+  const claim = await readSession<{ requestId: string; by: string }>(IMPORT_CLAIM_KEY)
+  if (claim?.requestId === request.requestId) return
+  await writeSession(IMPORT_CLAIM_KEY, { requestId: request.requestId, by: panelId })
+  await new Promise((done) => setTimeout(done, 60))
+  if ((await readSession<{ requestId: string; by: string }>(IMPORT_CLAIM_KEY))?.by !== panelId) return
+  const problems = importProblems()
+  if (problems.length > 0 || state.busy) {
+    return reportImport({ key: request.key, requestId: request.requestId, state: 'blocked', message: state.busy ? 'The side panel is already importing.' : problems.join(' ') })
+  }
+  await runImport(request.requestId)
+}
+
+function reportImport(status: ImportStatus): void {
+  void writeSession(STATUS_KEY, status).catch(() => {})
+}
+
+/** Remembers the form for this clip in the session, so a panel opened again carries on. */
+const saveForm = debounce(() => {
+  if (state.pending?.id && state.settings.templates.enabled) void writeSession(PANEL_FORM_KEY, { captureId: state.pending.id, form: state.form, linkChoices: state.linkChoices }).catch(() => {})
+}, 300)
 
 // ------------------------------------------------------------------------------- templates
 
@@ -508,7 +651,6 @@ function templateGroup(): HTMLElement | null {
     onchange: (e: Event) => {
       form.templateId = (e.target as HTMLSelectElement).value || undefined
       state.tagsText = undefined
-      state.fillOverrides = {}
       state.ai = { status: 'idle' }
       renderMain()
       void loadChosenTemplate()
@@ -593,7 +735,8 @@ async function maybeRunAi({ again = false } = {}): Promise<void> {
   if (!mode || mode === 'labels' || !plan || !capture || !state.plan) return renderAi()
   const key = aiKey()
   if (state.ai.key === key && !again) return renderAi()
-  const slots = slotsForAi(plan, mode, state.fillOverrides)
+  // Fields you changed in the mapper are yours: the AI leaves them alone.
+  const slots = slotsForAi(plan, mode, Object.fromEntries((state.mapping?.touched ?? []).map((id) => [id, { choice: 'mapper' }])))
   const blockIndexes = blocksForAi(plan, slots, mode, state.plan.blocks.length, new Synonyms(state.settings.templates.synonyms))
   if (slots.length === 0 || blockIndexes.length === 0) {
     state.ai = { key, status: 'done', message: slots.length === 0 ? 'Labels filled every field; the AI wasn’t needed.' : 'Everything in the clip is used; nothing left for the AI.' }
@@ -645,81 +788,29 @@ function renderAi(): void {
       : null)
 }
 
-const ORIGINS: Record<SlotOrigin, string> = {
-  rule: 'Saved rule', label: 'Label', synonym: 'Synonym', similar: 'Similar label', ai: 'AI', 'ai-written': 'AI-written', 'ai-wrote': 'Written by AI', derived: 'Worked out', manual: 'Your choice', typed: 'Typed', title: 'Page name',
-}
-
-/** The review screen: each field, what was found for it, and controls to change it. */
-function renderTemplateFields(): void {
-  const plan = state.fillPlan
-  const capture = state.pending?.capture
-  if (!plan || !capture) return clear(templateBox)
-  const site = siteHost(capture.url)
-  const fields = plan.slots.filter((s) => ['text', 'rich', 'image'].includes(s.slot.kind))
-  // Paths only tell apart fields that share a label.
-  const repeated = new Set(fields.map((s) => s.slot.key).filter((key, i, all) => key && all.indexOf(key) !== i))
-  const setOverride = (id: string, change: Partial<SlotOverride>) => {
-    state.fillOverrides[id] = { ...state.fillOverrides[id], ...change }
-    rebuildPlan()
-  }
-  const row = (s: SlotState): HTMLElement => {
-    const override = state.fillOverrides[s.slot.id] ?? {}
-    const choice = override.choice ?? s.candidate?.id ?? (s.status === 'ambiguous' ? '' : 'empty')
-    const options = [...s.contenders, ...s.options.filter((o) => !s.contenders.includes(o))]
-    if (s.candidate && !options.includes(s.candidate)) options.unshift(s.candidate)
-    const select = el('select', { 'aria-label': `Value for ${s.slot.label}`, onchange: (e: Event) => setOverride(s.slot.id, { choice: (e.target as HTMLSelectElement).value || undefined, off: undefined }) },
-      s.status === 'ambiguous' ? el('option', { value: '', selected: choice === '' }, `Choose (${s.contenders.length} labels fit)…`) : null,
-      el('option', { value: 'empty', selected: choice === 'empty' }, 'Leave empty'),
-      el('option', { value: 'typed', selected: choice === 'typed' }, 'Type a value…'),
-      ...options.slice(0, 40).map((c) => el('option', { value: c.id, selected: c.id === choice }, `${c.label === 'AI' ? 'AI' : `“${c.label}”`}: ${c.text.replace(/\s+/g, ' ').slice(0, 60)}`)))
-    const ticked = s.status === 'filled'
-    // The dropdown shows when a choice is needed or was made; otherwise behind "Change".
-    const open = expandedSlots.has(s.slot.id) || s.status === 'ambiguous' || s.status === 'empty' || override.choice !== undefined
-    const change = el('button', { type: 'button', class: 'link small', onclick: () => {
-      expandedSlots.add(s.slot.id)
-      change.replaceWith(select)
-      select.focus()
-    } }, 'Change')
-    return el('li', { class: s.status === 'ambiguous' ? 'ambiguous' : s.status === 'off' ? 'off' : '', 'data-slot': s.slot.label },
-      el('div', { class: 'slot-head' },
-        s.status === 'filled' || s.status === 'off'
-          ? el('input', { type: 'checkbox', checked: ticked, title: 'Use this value', 'aria-label': `Use the value for ${s.slot.label}`, onchange: (e: Event) => setOverride(s.slot.id, { off: !(e.target as HTMLInputElement).checked }) })
-          : null,
-        el('span', { class: 'slot-label' }, s.slot.label),
-        s.origin ? el('span', { class: `origin ${s.origin}` }, ORIGINS[s.origin]) : null,
-        s.status === 'ambiguous' ? el('span', { class: 'muted small' }, 'several labels fit') : null,
-        open ? null : change),
-      repeated.has(s.slot.key) ? el('span', { class: 'slot-path' }, s.slot.path) : null,
-      s.text ? el('div', { class: 'slot-value' }, s.text.slice(0, 300)) : null,
-      s.warning ? el('div', { class: 'slot-warning small' }, `${s.warning} Tick it to use it anyway.`) : null,
-      s.note ? el('div', { class: 'muted small' }, s.note) : null,
-      open ? select : null,
-      choice === 'typed'
-        ? el('input', { type: 'text', value: override.text ?? '', placeholder: s.slot.placeholder || 'Value', 'aria-label': `Typed value for ${s.slot.label}`, onchange: (e: Event) => setOverride(s.slot.id, { choice: 'typed', text: (e.target as HTMLInputElement).value }) })
-        : null,
-      s.origin === 'manual' && s.candidate?.key && s.slot.key && site
-        ? checkbox(`Remember for ${site}: “${s.candidate.label}” goes in “${s.slot.label}”`, !!override.remember, 'Saved as a rule for this site and template', (v) => setOverride(s.slot.id, { remember: v }))
-        : null)
-  }
-  const filled = fields.filter((s) => s.status !== 'empty')
-  const empty = fields.filter((s) => s.status === 'empty')
-  const order = { ambiguous: 0, filled: 1, off: 2, empty: 3 } as const
-  filled.sort((a, b) => order[a.status] - order[b.status])
-  const unused = plan.leftovers.length
+/** The template's fields in brief, and the button that opens the mapper to change them. */
+function renderTemplateSummary(): void {
+  const plan = filled()
+  if (!plan || !state.mapBase || !state.mapping) return clear(templateBox)
+  const counts = summarize(applyMapping(state.mapBase, state.mapping))
+  const fields = plan.slots.filter((s) => FILLABLE.has(s.slot.kind))
+  const ties = fields.filter((s) => s.status === 'ambiguous').map((s) => s.slot.label)
+  const unticked = fields.filter((s) => s.status === 'off').map((s) => s.slot.label)
+  const changed = state.mapping.touched.length
   clear(templateBox,
-    el('details', { open: true },
-      el('summary', {}, `Template fields: ${fields.filter((s) => s.status === 'filled').length} of ${fields.length} filled`),
-      el('ul', {}, ...filled.map(row)),
-      empty.length
-        ? el('details', {},
-            el('summary', { class: 'empty-slots' }, `Not filled (${empty.length}): ${empty.map((s) => s.slot.label).join(', ')}`),
-            el('ul', {}, ...empty.map(row)))
-        : null,
-      el('p', { class: 'muted small' }, unused
-        ? `${unused} part${unused === 1 ? '' : 's'} of the clip didn’t fit a field and go${unused === 1 ? 'es' : ''} at the end, after a divider.`
-        : 'Everything in the clip went into a field.'),
-      extraRowsField(plan),
-      tagsField()))
+    el('div', { class: 'map-summary' },
+      el('div', { class: 'map-counts', 'aria-label': 'Template fields' },
+        el('span', { class: 'count filled' }, el('strong', {}, String(counts.filled)), ' filled'),
+        el('span', { class: 'count empty' }, el('strong', {}, String(counts.empty + counts.toChoose)), ' empty'),
+        el('span', { class: 'count unused' }, el('strong', {}, String(counts.unused)), ' unused')),
+      el('button', { type: 'button', class: 'open-mapper', onclick: () => void openMapper() }, 'Open mapper'),
+      ties.length ? el('p', { class: 'small warning' }, `Several clip values fit ${ties.join(', ')}. Pick one in the mapper, or leave ${ties.length === 1 ? 'it' : 'them'} empty.`) : null,
+      unticked.length ? el('p', { class: 'small muted' }, `The AI’s answer for ${unticked.join(', ')} doesn’t match the clip, so it isn’t used. The mapper shows it if you want it anyway.`) : null,
+      el('p', { class: 'muted small' },
+        changed ? `You changed ${changed} field${changed === 1 ? '' : 's'} in the mapper. ` : 'Label matching filled these. ',
+        counts.unused ? `Unused parts of the clip go at the end, after a divider.` : 'Everything in the clip went into a field.')),
+    extraRowsField(plan),
+    tagsField())
 }
 
 /** Rows of a clip table added to a template list that lacks them ("Tool Proficiencies"). */
@@ -736,9 +827,10 @@ function extraRowsField(plan: FillPlan): HTMLElement | null {
 /** Tags worked out from a stat block's fields, spelled as the project already spells them. */
 function suggestedTags(): string[] {
   const t = state.settings.templates
-  if (!t.tagStatblocks || !state.fillPlan || !state.index) return []
+  const plan = filled()
+  if (!t.tagStatblocks || !plan || !state.index) return []
   const existing = [...state.index.byId.values()].flatMap((r) => r.tags)
-  return withProjectSpelling(statblockTags(state.fillPlan, new Synonyms(t.synonyms)), existing)
+  return withProjectSpelling(statblockTags(plan, new Synonyms(t.synonyms)), existing)
 }
 
 /** The tags the import adds to the page. */
@@ -805,19 +897,11 @@ function update(): void {
     )
   }
 
-  // Problems that block the import.
   const tree = templateTree()
-  const fillPlan = tree ? state.fillPlan : undefined
-  const notes0: string[] = []
-  const problems: string[] = []
-  if (plan.blocks.length === 0 && !fillPlan) problems.push('There is nothing to import in this clip.')
-  if (form.templateId && state.settings.templates.enabled && !tree) problems.push(state.templateLoading ? 'Reading the template…' : 'The template could not be read. Choose it again.')
-  if (fillPlan?.slots.some((s) => s.status === 'ambiguous')) notes0.push('Some fields match several labels: choose one for each below, or leave them empty.')
-  if (form.mode === 'new' && !form.title.trim()) problems.push('Name the new page.')
-  if (form.mode === 'append' && (!targetPicker.value || !form.targetDocumentId)) problems.push('Choose the page to add to.')
-  if (source.problem) problems.push(source.problem)
+  const fillPlan = tree ? filled() : undefined
+  const problems = importProblems()
 
-  const notes: (string | Node)[] = [...notes0]
+  const notes: (string | Node)[] = []
   if (form.mode === 'new') {
     notes.push(parentPicker.value ? `New page under ${state.index.path(parentPicker.value.id)}` : 'New page at the top level of the project (needs an ADMIN key)')
   } else if (targetPicker.value) {
@@ -834,18 +918,39 @@ function update(): void {
   clear(summaryBox, ...problems.map((p) => el('p', { class: 'problem' }, p)), el('ul', {}, ...notes.map((n) => el('li', {}, n))))
   renderLinks(plan.terms)
   renderAi()
-  if (fillPlan) renderTemplateFields()
+  if (fillPlan) renderTemplateSummary()
   else clear(templateBox)
   importButton.disabled = problems.length > 0 || state.busy
   importButton.textContent = form.mode === 'new' ? 'Create page' : 'Add to page'
 
-  const heading: Block | undefined = state.settings.sourceHeading
-    ? { kind: 'heading', level: 1, content: [{ text: 'From ' }, { mention: { resourceId: '_source', text: source.label } }] }
-    : undefined
+  const heading: Block | undefined = state.settings.sourceHeading ? sourceHeadingPreview(source.label) : undefined
   const blocks = tree && fillPlan
     ? templatePreview(tree, fillPlan, heading)
     : [...(form.mode === 'append' ? [{ kind: 'rule' } as Block] : []), ...(heading ? [heading] : []), ...plan.blocks]
   previewBox.innerHTML = blocksToHtml(blocks, { nameOf: (id) => state.index?.get(id)?.name })
+  saveForm()
+  publishMapper()
+}
+
+/** What stops the import: shown in the panel, and in the mapper next to its Import button. */
+function importProblems(): string[] {
+  const form = state.form
+  const plan = state.plan
+  const tree = templateTree()
+  const problems: string[] = []
+  if (!plan) return ['The clip is still being read.']
+  if (plan.blocks.length === 0 && !(tree && state.fillPlan)) problems.push('There is nothing to import in this clip.')
+  if (form.templateId && state.settings.templates.enabled && !tree) problems.push(state.templateLoading ? 'Reading the template…' : 'The template could not be read. Choose it again.')
+  if (form.mode === 'new' && !form.title.trim()) problems.push('Name the new page.')
+  if (form.mode === 'append' && (!targetPicker?.value || !form.targetDocumentId)) problems.push('Choose the page to add to.')
+  const source = chosenSource()
+  if (source.problem) problems.push(source.problem)
+  return problems
+}
+
+/** The "From <Source>" heading as the preview shows it, before the Source exists. */
+function sourceHeadingPreview(label: string): Block {
+  return { kind: 'heading', level: 1, content: [{ text: 'From ' }, { mention: { resourceId: '_source', text: label } }] }
 }
 
 /**
@@ -885,7 +990,7 @@ function renderLinks(terms: LinkTerm[]): void {
     el('ul', {}, ...rows)))
 }
 
-async function runImport(): Promise<void> {
+async function runImport(requestId?: string): Promise<void> {
   const { plan, lk, index, project } = state
   const capture = state.pending?.capture
   const source = chosenSource()
@@ -893,7 +998,10 @@ async function runImport(): Promise<void> {
   if (!plan || !lk || !index || !project || !capture || state.busy) return
   if (state.settings.sourceHeading && (!source.spec || (source.spec.kind === 'new' && !config))) return
   const tree = templateTree()
-  const fillPlan = tree ? state.fillPlan : undefined
+  const fillPlan = tree ? filled() : undefined
+  // The mapper tab hears how it went, whichever button started it.
+  const key = state.mapBase?.key
+  const report = (status: Omit<ImportStatus, 'key' | 'requestId'>) => key && fillPlan && reportImport({ key, ...(requestId ? { requestId } : {}), ...status })
   const template = tree && fillPlan && state.template ? { content: state.template, plan: fillPlan, keepUnfilled: state.settings.templates.keepUnfilled, tags: pageTags() } : undefined
 
   state.busy = true
@@ -901,6 +1009,7 @@ async function runImport(): Promise<void> {
   progressBox.hidden = false
   progressBox.className = 'progress'
   progressBox.textContent = 'Starting…'
+  report({ state: 'importing', message: 'Starting…' })
   try {
     const form = state.form
     const result = await importClip(lk, index, plan, {
@@ -911,19 +1020,27 @@ async function runImport(): Promise<void> {
       template,
       sourceConfig: config ?? { sourcesRootId: '' },
       assetFolderName: state.settings.assetFolder,
-      onProgress: (message) => (progressBox.textContent = message),
+      onProgress: (message) => {
+        progressBox.textContent = message
+        report({ state: 'importing', message })
+      },
       // With the extension's host permission, image requests can carry the site's cookies, like the page's own.
       fetchImpl: (input, init) => fetch(input, { ...init, credentials: 'include' }),
     })
     await rememberAfterImport(result.source?.id)
     await persistIndex()
     const warnings = result.templateMissing.length ? [`${result.templateMissing.length} field(s) were not found in the new page (the template may have changed) and were skipped.`] : []
-    renderDone(result.url, form.mode === 'new' ? form.title.trim() : targetPicker.value!.name, form.mode, result.sourceCreated ? result.source?.name : undefined, result.imagesFailed, warnings)
+    const title = form.mode === 'new' ? form.title.trim() : targetPicker.value!.name
+    report({ state: 'done', message: `${form.mode === 'new' ? 'Created' : 'Added to'} “${title}”.${warnings.length ? ` ${warnings.join(' ')}` : ''}`, url: result.url })
+    renderDone(result.url, title, form.mode, result.sourceCreated ? result.source?.name : undefined, result.imagesFailed, warnings)
   } catch (error) {
     if (error instanceof TemplateFillError) {
       await persistIndex()
-      return renderFillFailed(error as TemplateFillError & { composition: Composition; url: string })
+      const failed = error as TemplateFillError & { composition: Composition; url: string }
+      report({ state: 'fill-failed', message: `“${failed.resource.name}” was created from the template, but filling it failed: ${describeError(failed.cause)} In the side panel, choose Try filling again or Delete the new page.`, url: failed.url })
+      return renderFillFailed(failed)
     }
+    report({ state: 'failed', message: describeError(error) })
     progressBox.className = 'progress error'
     progressBox.textContent = describeError(error)
     importButton.disabled = false
@@ -958,8 +1075,8 @@ async function rememberAfterImport(sourceId: string | undefined): Promise<void> 
     sourceId: sourceId ?? previous?.sourceId,
     templateBySource,
   })
-  if (state.fillPlan && state.template && templateTree()) {
-    const added = rulesFromChoices(state.fillPlan, state.fillOverrides, { site: siteHost(capture.url), templateId: state.template.id, templateName: state.template.name })
+  if (state.mapBase && state.mapping && state.template && templateTree()) {
+    const added = rulesFromMapping(state.mapBase, state.mapping, { site: siteHost(capture.url), templateId: state.template.id, templateName: state.template.name })
     if (added.length) {
       project.rules = mergeRules(project.rules ?? [], added)
       await saveSettings(state.settings)
