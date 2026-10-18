@@ -36,7 +36,10 @@ export function mainDocIndex(tree: TemplateTree): number {
   return main >= 0 ? main : 0
 }
 
-export function compose(tree: TemplateTree, plan: FillPlan, options: ComposeOptions): Composition {
+/** What compose needs from a fill plan; the mapper's result has the same shape. */
+export type ComposablePlan = Pick<FillPlan, 'fills' | 'leftovers' | 'subject'> & { slots: Pick<FillPlan['slots'][number], 'slot' | 'status'>[] }
+
+export function compose(tree: TemplateTree, plan: ComposablePlan, options: ComposeOptions): Composition {
   const fills = new Map(plan.fills)
   for (const state of plan.slots) {
     if (state.status === 'filled' || state.slot.kind === 'source') continue

@@ -33,8 +33,9 @@ export interface TemplateTree {
  * - image: an image block or property; takes one image.
  * - name: a heading such as "[Spell] Name"; takes the page name.
  * - source: a "From [Source]" heading; takes the Source link.
+ * - links: a links block or a hand-picked collection; takes the pages the clip links to.
  */
-export type SlotKind = 'text' | 'rich' | 'image' | 'name' | 'source'
+export type SlotKind = 'text' | 'rich' | 'image' | 'name' | 'source' | 'links'
 
 export type SlotTarget =
   | { type: 'row'; at: number[]; row: number }
@@ -44,6 +45,7 @@ export type SlotTarget =
   | { type: 'image'; at: number[] }
   | { type: 'name'; at: number[] }
   | { type: 'source'; at: number[]; length: number }
+  | { type: 'links'; at: number[] }
 
 export interface Slot {
   id: string
@@ -195,7 +197,7 @@ function walkSiblings(blocks: AnyBlock[], at: number[], path: string[], doc: num
       ;(block.rows as AnyBlock[]).forEach((row, r) => out.push(...slotsForProperty(row, [...here, r], [...path, 'Infobox'], doc).map(withId)))
       continue
     }
-    if (block.kind === 'keyValue' || block.kind === 'textField' || block.kind === 'image') {
+    if (block.kind === 'keyValue' || block.kind === 'textField' || block.kind === 'image' || block.kind === 'resourceLink' || block.kind === 'resourceCollection') {
       out.push(...slotsForProperty(block, here, path, doc).map(withId))
       continue
     }
@@ -238,7 +240,32 @@ function slotsForProperty(block: AnyBlock, at: number[], path: string[], doc: nu
     const label = title && !isWeakLabel(title) ? title : 'Image'
     return [{ label, key: cleanLabel(label), path: [...path, label].join(' › '), kind: 'image' as const, placeholder: String(block.url ?? ''), doc, target: { type: 'image' as const, at } }]
   }
+  // A collection that picks pages by a filter (a Source's Backlinks) fills itself: only one whose
+  // pages are picked by hand takes the clip's links.
+  if (block.kind === 'resourceLink' || (block.kind === 'resourceCollection' && !block.filter)) {
+    const fallback = block.kind === 'resourceLink' ? 'Links' : 'Collection'
+    const label = title && !isWeakLabel(title) ? title : fallback
+    const items = (block.items ?? []) as unknown[]
+    return [{ label, key: title && !isWeakLabel(title) ? cleanLabel(title) : '', path: [...path, label].join(' › '), kind: 'links' as const, placeholder: items.length ? `${items.length} linked page${items.length === 1 ? '' : 's'}` : '', doc, target: { type: 'links' as const, at } }]
+  }
   return []
+}
+
+/** The pages mentioned in blocks or runs, in order, each once: what a links slot takes. */
+export function mentionsIn(value: Block[] | Run[]): string[] {
+  const out: string[] = []
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk)
+    if (!node || typeof node !== 'object') return
+    const mention = (node as { mention?: { resourceId?: string } }).mention
+    if (mention?.resourceId) {
+      if (!out.includes(mention.resourceId)) out.push(mention.resourceId)
+      return
+    }
+    for (const child of Object.values(node)) if (child && typeof child === 'object') walk(child)
+  }
+  walk(value)
+  return out
 }
 
 /** The column headings of the first table in a slot's placeholder, as { table } to spread into the slot. */
@@ -271,6 +298,8 @@ export type SlotFill =
   | { runs: Run[]; extraRows?: { key: string; content: Run[] }[] }
   | { blocks: Block[] }
   | { image: { url: string; alt?: string } }
+  /** The pages a links block or collection lists. */
+  | { links: string[] }
   | { remove: true }
 
 /** Operations on sidebar properties, which are written with their own API calls. */
@@ -292,6 +321,7 @@ type Edit =
   | { type: 'remove' }
   | { type: 'image'; url: string; alt?: string }
   | { type: 'content'; content: Run[] }
+  | { type: 'links'; items: { resourceId: string }[] }
   /** Replace this block and the `length` siblings after it with `blocks`. */
   | { type: 'span'; length: number; blocks: Block[] }
 
@@ -337,6 +367,9 @@ export function fillTree(tree: TemplateTree, slots: Slot[], fills: Map<string, S
       // A quote placeholder stays a quote.
       const value = original.kind === 'quote' && blocks.length > 0 ? [{ ...original, children: blocks } as Block] : blocks
       docEdits.set(key, { type: 'span', length: t.length - 1, blocks: value })
+    } else if (t.type === 'links') {
+      if ('remove' in fill) docEdits.set(key, { type: 'remove' })
+      else if ('links' in fill) docEdits.set(key, { type: 'links', items: fill.links.map((resourceId) => ({ resourceId })) })
     } else if (t.type === 'source') {
       // A source fill is the heading followed by any blocks to put under it.
       docEdits.set(key, { type: 'span', length: t.length, blocks: 'remove' in fill ? [] : fillBlocks(fill) })
@@ -356,6 +389,7 @@ function propertyOp(slot: Slot, fill: SlotFill): PropertyOp | undefined {
   if ('remove' in fill) return { op: 'delete', propertyId }
   if (slot.target.type === 'field') return { op: 'update', propertyId, patch: { children: fillBlocks(fill) } }
   if (slot.target.type === 'image' && 'image' in fill) return { op: 'update', propertyId, patch: { url: fill.image.url, ...(fill.image.alt ? { alt: fill.image.alt } : {}) } }
+  if (slot.target.type === 'links' && 'links' in fill) return { op: 'update', propertyId, patch: { items: fill.links.map((resourceId) => ({ resourceId })) } }
   return undefined
 }
 
@@ -424,6 +458,7 @@ function rebuild(blocks: AnyBlock[], prefix: string, edits: Map<string, Edit>): 
     } else if (edit?.type === 'children') block = { ...block, children: edit.children }
     else if (edit?.type === 'image') block = { ...block, url: edit.url, ...(edit.alt ? { alt: edit.alt } : {}) }
     else if (edit?.type === 'content') block = { ...block, content: edit.content }
+    else if (edit?.type === 'links') block = { ...block, items: edit.items }
 
     if (block.kind === 'infobox') {
       const rows = rebuild(block.rows as AnyBlock[], key, edits)

@@ -806,7 +806,7 @@ describe('class template (D&D Beyond Bard, 2024)', () => {
     assert.match(slotNamed(p, 'As a Multiclass Character').text, /^Gain the following traits/)
     assert.match(slotNamed(p, 'Class Features Table').text, /^Level \| Proficiency Bonus \| Class Features \| Bardic Die/, 'the spanning “Spell Slots” row is left out')
     assert.match(slotNamed(p, '[Class] Class Features').text, /^As a Bard, you gain[\s\S]*Level 1: Bardic Inspiration[\s\S]*Level 20: Words of Creation/)
-    assert.deepEqual(p.extraRows, [{ label: 'Tool Proficiencies', text: 'Choose 3 Musical Instruments' }])
+    assert.deepEqual(p.extraRows, [{ label: 'Tool Proficiencies', text: 'Choose 3 Musical Instruments', slotId: 'tab0:text:infobox › starting equipment', unit: 'b2.r5' }])
     assert.deepEqual(p.leftovers, [])
   })
 

@@ -180,3 +180,9 @@ progress { width: 100%; }
 @media (max-width: 520px) {
   .preview .lk-infobox.left, .preview .lk-infobox.right { float: none; width: 100%; margin: 0 0 8px; }
 }
+
+.settings-list.rules li { flex-direction: column; align-items: stretch; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.rule-head { display: flex; gap: 8px; align-items: baseline; }
+.rule-head button { margin-left: auto; }
+.rule-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.rule-row .field > label { font-size: 10px; }

@@ -14,9 +14,10 @@ import { builtInPackFor, notesFor, savedNotes, withNotes } from '../fill/notes.j
 import { suggestNotes } from '../fill/notesAi.js'
 import { appendTree, appendedTemplate, applyComposition, compose, type Composition } from '../fill/compose.js'
 import { AiUnavailableError, listFreeModels, ON_DEVICE_HELP, onDeviceStatus, OnDeviceEngine, OpenRouterEngine, suggest, type AiEngine, type FreeModel } from '../fill/engines.js'
-import { DEFAULT_SYNONYMS, formatSynonyms, parseSynonyms, Synonyms } from '../fill/labels.js'
-import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillMode, type FillPlan, type SlotOrigin, type SlotOverride, type SlotState } from '../fill/plan.js'
-import { buildSlots, type TemplateTree } from '../fill/template.js'
+import { cleanLabel, DEFAULT_SYNONYMS, formatSynonyms, parseSynonyms, Synonyms } from '../fill/labels.js'
+import { blocksForAi, mergeRules, planFill, rulesFromChoices, type AiSuggestion, type FillMode, type FillPlan, type SavedRule, type SlotOrigin, type SlotOverride, type SlotState } from '../fill/plan.js'
+import { FILLABLE } from '../fill/mapping.js'
+import { buildSlots, type Slot, type TemplateTree } from '../fill/template.js'
 import { parseTags, statblockTags, withProjectSpelling } from '../fill/tags.js'
 import { createClient } from '../lk/client.js'
 import { describeError, isNotFound } from '../lk/errors.js'
@@ -1364,17 +1365,7 @@ function templateSettings(): HTMLElement {
   const notesEditor = templateNotesEditor()
 
   const rules = project?.rules ?? []
-  const rulesList = el('ul', { class: 'settings-list' }, ...rules.map((rule, i) => {
-    const loaded = state.template?.id === rule.templateId ? state.template : undefined
-    const stale = loaded && !buildSlots(loaded.tree).some((slot) => slot.key === rule.slotKey)
-    return el('li', {},
-      el('span', {}, el('strong', {}, rule.site), ` · ${rule.templateName}: “${rule.candidateLabel}” → “${rule.slotLabel}”`, stale ? el('span', { class: 'problem' }, ' (that field is no longer in the template; skipped)') : null),
-      el('button', { type: 'button', class: 'link', onclick: () => {
-        project!.rules = rules.filter((_, j) => j !== i)
-        save()
-        renderSettings()
-      } }, 'Delete'))
-  }))
+  const rulesList = savedRulesEditor(rules, save)
 
   return el('section', {},
     el('h3', {}, 'Templates'),
@@ -1402,8 +1393,82 @@ function templateSettings(): HTMLElement {
       el('p', { class: 'muted small' }, 'For templates with stat block fields (Armour Class, Hit Points, ability scores…): “Medium Humanoid (Any Race), Any Non-Good Alignment” and CR 8 give the tags Medium, Humanoid, Any Non-Good Alignment and CR 8. You can change them on the review screen.'),
       notesEditor,
       field(`Saved rules${project ? ` in ${project.projectName}` : ''}`,
-        rules.length ? rulesList : el('p', { class: 'muted small' }, 'None yet. When you pick a different value for a field on the review screen, you can remember it for that website.')),
+        rules.length ? rulesList : el('p', { class: 'muted small' }, 'None yet. When you drag a labelled part of the clip into a field in the mapper, you can remember it for that website.'),
+        rules.length ? el('p', { class: 'muted small' }, 'On that website, a clip value with this label goes in this field of the template, before any other label matching. Change the website, the clip’s label or the field here.') : null),
     ) : null)
+}
+
+/**
+ * Saved rules, editable: the website, the clip's label and the template field. Each template is read
+ * (from the cache when it can be) to offer its fields and to mark rules whose field it no longer has.
+ */
+function savedRulesEditor(rules: SavedRule[], save: () => void): HTMLElement {
+  const project = state.project!
+  const list = el('ul', { class: 'settings-list rules' })
+  const slotsByTemplate = new Map<string, Promise<Slot[] | undefined>>()
+  const slotsOf = (templateId: string): Promise<Slot[] | undefined> => {
+    let entry = slotsByTemplate.get(templateId)
+    if (!entry) {
+      const resource = state.index?.get(templateId)
+      entry = resource && state.lk && state.index?.isTemplate(templateId)
+        ? templateCache.get(state.lk, resource).then((content) => buildSlots(content.tree).filter((s) => s.key && FILLABLE.has(s.kind)), () => undefined)
+        : Promise.resolve(undefined)
+      slotsByTemplate.set(templateId, entry)
+    }
+    return entry
+  }
+  const changed = () => {
+    project.rules = rules
+    save()
+  }
+  rules.forEach((rule, i) => {
+    const notice = el('span', { class: 'muted small' })
+    const slotSelect = el('select', { 'aria-label': 'Template field', onchange: (e: Event) => {
+      const option = (e.target as HTMLSelectElement).selectedOptions[0]
+      if (!option) return
+      rule.slotKey = option.value
+      rule.slotLabel = option.dataset.label ?? option.textContent ?? option.value
+      changed()
+      notice.textContent = ''
+      notice.className = 'muted small'
+    } }, el('option', { value: rule.slotKey, 'data-label': rule.slotLabel, selected: true }, rule.slotLabel))
+    const site = el('input', { type: 'text', value: rule.site, 'aria-label': 'Website', onchange: (e: Event) => {
+      rule.site = (e.target as HTMLInputElement).value.trim().toLowerCase().replace(/^www\./, '')
+      changed()
+    } })
+    const label = el('input', { type: 'text', value: rule.candidateLabel, 'aria-label': 'Label in the clip', onchange: (e: Event) => {
+      const value = (e.target as HTMLInputElement).value.trim()
+      if (!value) return
+      rule.candidateLabel = value
+      rule.candidateKey = cleanLabel(value)
+      changed()
+    } })
+    list.append(el('li', {},
+      el('div', { class: 'rule-head' }, el('strong', {}, rule.templateName), notice,
+        el('button', { type: 'button', class: 'link', onclick: () => {
+          rules.splice(i, 1)
+          changed()
+          renderSettings()
+        } }, 'Delete')),
+      el('div', { class: 'rule-row' }, field('On', site), field('Clip label', label), field('Goes in', slotSelect))))
+    void slotsOf(rule.templateId).then((slots) => {
+      if (!slots) {
+        notice.textContent = state.index && !state.index.get(rule.templateId) ? ' The template no longer exists; skipped.' : ''
+        notice.className = 'problem small'
+        return
+      }
+      const seen = new Set<string>()
+      const options = slots.filter((s) => !seen.has(s.key) && seen.add(s.key))
+      if (!options.some((s) => s.key === rule.slotKey)) {
+        notice.textContent = ` “${rule.slotLabel}” is no longer in the template; skipped. Choose another field or delete it.`
+        notice.className = 'problem small'
+      }
+      clear(slotSelect,
+        ...(options.some((s) => s.key === rule.slotKey) ? [] : [el('option', { value: rule.slotKey, 'data-label': rule.slotLabel, selected: true }, `${rule.slotLabel} (missing)`)]),
+        ...options.map((s) => el('option', { value: s.key, 'data-label': s.label, selected: s.key === rule.slotKey }, s.label)))
+    })
+  })
+  return list
 }
 
 // -------------------------------------------------------------------------------- form parts

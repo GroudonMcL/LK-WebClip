@@ -356,27 +356,32 @@ function stripLeadingColon(runs: Run[]): Run[] {
  * The clip without the parts used in the template: whole blocks, table rows, and paragraph
  * segments. A table whose every column was used goes too.
  */
-export function leftoverBlocks(blocks: Block[], extraction: Extraction, used: Iterable<string>): Block[] {
+export function leftoverBlocks(blocks: Block[], extraction: Pick<Extraction, 'split' | 'captions'>, used: Iterable<string>): Block[] {
+  return leftoverEntries(blocks, extraction, used).map((entry) => entry.block)
+}
+
+/** leftoverBlocks, with the top-level index each block comes from. */
+export function leftoverEntries(blocks: Block[], extraction: Pick<Extraction, 'split' | 'captions'>, used: Iterable<string>): { index: number; block: Block }[] {
   const units = new Set(used)
   const gone = goneBlocks(blocks, extraction, units)
-  const out: Block[] = []
+  const out: { index: number; block: Block }[] = []
   blocks.forEach((block, i) => {
     if (gone.has(i)) return
     const split = extraction.split.get(i)
     if (split && split.segments.some((s) => units.has(s.unit))) {
       const keep: Run[] = split.runs.slice(0, split.segments[0]!.from)
       for (const segment of split.segments) if (!units.has(segment.unit)) keep.push(...split.runs.slice(segment.from, segment.to))
-      if (runsText(keep).trim()) out.push({ ...block, content: keep } as Block)
+      if (runsText(keep).trim()) out.push({ index: i, block: { ...block, content: keep } as Block })
       return
     }
     if (block.kind === 'table') {
       const rows = block.children.filter((_, r) => !units.has(`b${i}.r${r}`))
       if (rows.length < block.children.length) {
-        out.push({ ...block, children: rows as typeof block.children })
+        out.push({ index: i, block: { ...block, children: rows as typeof block.children } })
         return
       }
     }
-    out.push(block)
+    out.push({ index: i, block })
   })
   return out
 }
@@ -386,7 +391,7 @@ export function leftoverBlocks(blocks: Block[], extraction: Extraction, used: It
  * caption whose table is gone, and a heading everything under which is gone ("Becoming a Bard…"
  * once both its lists are in fields).
  */
-export function goneBlocks(blocks: Block[], extraction: Extraction, units: Set<string>): Set<number> {
+export function goneBlocks(blocks: Block[], extraction: Pick<Extraction, 'captions'>, units: Set<string>): Set<number> {
   const gone = new Set<number>()
   blocks.forEach((block, i) => {
     if (units.has(`b${i}`)) gone.add(i)

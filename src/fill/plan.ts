@@ -3,7 +3,7 @@ import { extractCandidates, goneBlocks, leftoverBlocks, overlaps, type Candidate
 import { isWritable } from './ai.js'
 import { applyDerived, completes, type DerivedRule } from './derived.js'
 import { cleanLabel, compareLabels, LabelMatch, namedMatch, type Synonyms } from './labels.js'
-import { blockText, blocksToRuns, buildSlots, runsText, SIDEBAR, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
+import { blockText, blocksToRuns, buildSlots, mentionsIn, runsText, SIDEBAR, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
 /**
  * Decides what goes in each slot of a template: saved rules, then label matching, then the AI's
@@ -68,6 +68,12 @@ export interface SlotState {
   warning?: string
   /** Where a worked-out value came from ("From Dexterity: 16 (+3)"). */
   note?: string
+  /**
+   * Every part of the clip a filled slot uses (see Candidate.units), including parts dropped with
+   * its value (a table's caption) and table rows added to its list. The mapper uses it to keep the
+   * slots you don't touch exactly as they are.
+   */
+  units?: string[]
 }
 
 export interface FillInput {
@@ -120,7 +126,7 @@ export interface FillPlan {
   /** "[Class]" in the template's headings, to be written as the page's name ("Core [Class] Traits" → "Core Bard Traits"). */
   subject?: { placeholder: string; name: string }
   /** Rows of a clip table added to a template list it filled, because the template has no row for them ("Tool Proficiencies"). */
-  extraRows: { label: string; text: string }[]
+  extraRows: { label: string; text: string; slotId: string; unit: string }[]
 }
 
 const ORIGIN_OF: Record<LabelMatch, SlotOrigin> = {
@@ -145,6 +151,7 @@ export function fits(slot: Slot, candidate: Candidate): boolean {
   if (slot.kind === 'text') return candidate.kind === 'pair' || (candidate.kind === 'section' && candidate.text.length <= 200 && candidate.blocks.length <= 3 && candidate.blocks.every((b) => b.kind === 'paragraph'))
   if (slot.kind === 'rich') return candidate.kind === 'section' || candidate.kind === 'pair'
   if (slot.kind === 'image') return candidate.kind === 'image'
+  if (slot.kind === 'links') return candidate.kind !== 'image' && mentionsIn(candidate.runs ?? candidate.blocks).length > 0
   return false
 }
 
@@ -169,6 +176,8 @@ function plan(input: FillInput): FillPlan {
 
   const states = new Map<string, SlotState>()
   const used: string[] = []
+  /** The parts of the clip each slot uses, kept alongside `used`. */
+  const slotUnits = new Map<string, string[]>()
   const taken = new Set<string>()
   /**
    * The blocks under a section's heading, by the slot holding them. A field matched by label to a
@@ -214,10 +223,12 @@ function plan(input: FillInput): FillPlan {
         softOwner.delete(unit)
         used.splice(used.indexOf(unit), 1)
       }
+      slotUnits.set(owner, (slotUnits.get(owner) ?? []).filter((u) => !gone.has(u)))
       const keep = c.blocks.map((_, k) => !gone.has(c.units[k + 1]!))
       const blocks = c.blocks.filter((_, k) => keep[k])
       if (blocks.length === 0) {
         used.splice(used.indexOf(c.units[0]!), 1)
+        slotUnits.delete(owner)
         taken.delete(c.id)
         states.set(owner, { ...state, status: 'empty', candidate: undefined, origin: undefined, text: '' })
         continue
@@ -290,6 +301,7 @@ function plan(input: FillInput): FillPlan {
     states.set(slot.id, { ...states.get(slot.id)!, status: 'filled', candidate, origin, text })
     taken.add(candidate.id)
     used.push(...candidate.units)
+    slotUnits.set(slot.id, [...candidate.units])
     if (isSection(candidate)) for (const unit of candidate.units.slice(1)) softOwner.set(unit, slot.id)
   }
 
@@ -389,6 +401,7 @@ function plan(input: FillInput): FillPlan {
     const off = input.overrides[slot.id]?.off ?? (state.origin === 'ai-written' || state.warning !== undefined)
     if (off) {
       state.status = 'off'
+      slotUnits.delete(slot.id)
       if (state.candidate) {
         taken.delete(state.candidate.id)
         for (const unit of state.candidate.units) {
@@ -473,8 +486,9 @@ function plan(input: FillInput): FillPlan {
           if (c.kind !== 'pair' || c.units.length !== 1 || !c.units[0]!.startsWith(`b${table}.r`) || overlaps(c.units, used) || !c.runs) continue
           if (rows.some((r) => r.slot.key === c.key) || c.key === titleKey) continue
           added.push({ key: c.label, content: c.runs })
-          extraRows.push({ label: c.label, text: c.text })
+          extraRows.push({ label: c.label, text: c.text, slotId: rows.at(-1)!.slot.id, unit: c.units[0]! })
           used.push(c.units[0]!)
+          slotUnits.get(rows.at(-1)!.slot.id)?.push(c.units[0]!)
         }
       }
       if (added.length > 0) extraFor.set(rows.at(-1)!.slot.id, added)
@@ -484,6 +498,7 @@ function plan(input: FillInput): FillPlan {
   const fills = new Map<string, SlotFill>()
   for (const state of states.values()) {
     if (state.status !== 'filled') continue
+    state.units = slotUnits.get(state.slot.id) ?? []
     if (state.slot.kind === 'name') fills.set(state.slot.id, { runs: [{ text: input.title }] })
     else if (state.candidate) {
       const fill = valueFor(state.slot, state.candidate)
@@ -667,12 +682,13 @@ function typedCandidate(slot: Slot, text: string): Candidate {
   return { id: `typed:${slot.id}`, label: slot.label, key: slot.key, kind: 'pair', runs, blocks: text.split(/\n+/).map((line) => ({ kind: 'paragraph', content: [{ text: line }] })), text, units: [] }
 }
 
-function valueFor(slot: Slot, candidate: Candidate): SlotFill {
+export function valueFor(slot: Slot, candidate: Candidate): SlotFill {
   if (slot.kind === 'image') {
     const image = candidate.blocks[0] as AnyBlock
     return { image: { url: String(image.url), ...(image.alt ? { alt: String(image.alt) } : {}) } }
   }
   if (slot.kind === 'text') return { runs: candidate.runs ?? blocksToRuns(candidate.blocks) }
+  if (slot.kind === 'links') return { links: mentionsIn(candidate.runs ?? candidate.blocks) }
   // Sub-headings keep their depth under the section's heading: "Level 1: Bardic Inspiration" two
   // levels below "Bard Class Features" stays two levels below the template's heading.
   if (slot.target.type === 'section' && candidate.level !== undefined) {
