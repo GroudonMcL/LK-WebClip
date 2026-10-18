@@ -17,6 +17,11 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 | 4 | Template filling: fill your LegendKeeper templates from a clip, by label matching and optional AI | **Done.** See [docs/PHASE4.md](docs/PHASE4.md) |
 | 5 | Complex tables, site-specific rules, Source deduplication | Next |
 | PDF | LK Reader: open PDFs side by side with clean, clippable text | **Done.** See [docs/PDF.md](docs/PDF.md) |
+| M1 | Mapper groundwork: the clip as cards, a plain-data mapping, links fields, editable saved rules | **Done.** See [docs/MAPPER.md](docs/MAPPER.md) |
+| M2 | The mapper tab: clip cards, template wireframe, Unused tray, live preview; the panel's summary and Open mapper | **Done.** See [docs/MAPPER.md](docs/MAPPER.md) |
+| M3 | Moving cards: drag and drop, click-to-place, keyboard, reordering, typing, clearing, ties, splitting a selection | **Done.** See [docs/MAPPER.md](docs/MAPPER.md) |
+| M4 | Rules and import from the mapper: "Remember this for <site>", import from the mapper tab or the panel | **Done.** See [docs/MAPPER.md](docs/MAPPER.md) |
+| M5 | Mapper tests and docs: browser checks of the mapper, and of the panel with a stand-in API | **Done.** See [docs/MAPPER.md](docs/MAPPER.md) |
 | 6 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
 ## Install
@@ -44,11 +49,11 @@ Then in the panel:
 - **Template** (when **Settings → Templates → Enable template filling** is on): pick one of your LegendKeeper templates, or leave it at “None (clip as usual)”.
   - For a **new page**, the page is made from the template and its fields are filled in from the clip. For **Add to a page**, the template’s main tab is filled in and added below the existing content, after a divider. Child pages of templates are not copied.
   - **Fill with**: **Labels** finds the template’s labels in the clip (“Armor Class 15”, a “Traits” heading, “STR / 8 (-1)”, table rows, “Label: value”), using synonyms such as AC = Armour Class. **AI** asks a language model to pick the parts of the clip for each field. **Labels then AI** asks the AI only about what labels left empty.
-  - The **Template fields** list shows each field, its value and where it came from (Label, Synonym, Saved rule, AI…). Untick a value to leave it out, or **Change** it to another part of the clip or a typed value. A field that several labels fit is never guessed. When you pick a value yourself, you can **Remember** it for that website; saved rules are listed in Settings.
+  - The panel shows how many fields were **filled**, how many are **empty** and how many parts of the clip are **unused**. **Open mapper** opens the mapper in its own tab: drag parts of the clip into a picture of the template, see where each value came from (Label, Saved rule, AI, Manual…), pick between values when several fit, type or clear a field, and watch the preview change. When you drag a labelled value into a field yourself, you can **Remember** it for that website; saved rules are listed, and can be edited, in Settings. See [docs/MAPPER.md](docs/MAPPER.md).
   - **Keep unfilled template fields**: on keeps the template’s placeholder text where nothing was found; off removes those fields.
   - The “From <Source>” credit goes at the top of the new page, or at the top of what is added to a page. If the template has its own “From [Source]” heading, the credit goes there instead.
   - Anything in the clip that didn’t go in a field is added at the end, after a divider (or under the template’s own “From [Source]” heading, when only placeholder text sits under it).
-  - **Headings that name the page:** a site’s “Bard Class Features” or “As a Level 1 Bard” fills the template’s “[Class] Class Features” or “As a Level 1 Character”. “[Class]” in a Class Template’s headings becomes the page’s name. A table in the template takes the clip’s table with the same column headings. A clip table’s rows the template’s list lacks (“Tool Proficiencies”) are added to the list, with a tick box on the review screen. See [docs/PHASE4.md](docs/PHASE4.md#class-templates-051).
+  - **Headings that name the page:** a site’s “Bard Class Features” or “As a Level 1 Bard” fills the template’s “[Class] Class Features” or “As a Level 1 Character”. “[Class]” in a Class Template’s headings becomes the page’s name. A table in the template takes the clip’s table with the same column headings. A clip table’s rows the template’s list lacks (“Tool Proficiencies”) are added to the list, with a tick box in the panel. See [docs/PHASE4.md](docs/PHASE4.md#class-templates-051).
   - **Tags to add** (stat block templates): the creature’s size, type, alignment and challenge rating become tags, e.g. Medium, Humanoid, Any Non-Good Alignment and CR 8. Words in brackets and “Typically” are left out, and a tag your project already has keeps its spelling. Edit or clear them before importing; **Settings → Templates → Tag stat block pages** turns this off.
 - **Source:**
   - **Add a “From <Source>” heading** credits the clip with a heading linking to its Source page. Untick it to clip without a credit (and without a Source).
@@ -119,6 +124,8 @@ npm test                  # offline unit tests (converter, link resolution, inde
 npm run typecheck
 npm run build             # the extension, into dist/extension (add -- --zip for a zip)
 npm run e2e               # loads the built extension in Chromium and clips into your project
+npm run mapper:check      # drives the mapper tab in Chromium with saved clips (no API key needed)
+npm run panel:check       # the side panel and the mapper together, against a stand-in LegendKeeper API (no API key needed)
 npm run reader:check -- book.pdf   # opens a PDF in the built extension's reader and checks text, images and clipping (no API key needed)
 npm run pdf:reflow -- book.pdf     # writes a side-by-side HTML of a PDF's reflowed text, for tuning the reflow rules
 npm run phase2:import     # converts and links real web pages, and imports them through the same pipeline
@@ -132,9 +139,9 @@ The live checks write only under the page **LK Web Clipper Sandbox** and never d
 ```
 src/lk/          LegendKeeper integration: client, project index, search, Sources, pages, templates, images, errors
 src/clip/        HTML → LegendKeeper blocks, link resolution, preview rendering, the import pipeline
-src/fill/        Template filling: slots, clip candidates, label matching, AI jobs and engines, composing the page
+src/fill/        Template filling: slots, clip candidates, label matching, AI jobs and engines, the mapper's cards and mapping, composing the page
 src/pdf/         PDF reading: pdf.js extraction, reflow into reading order, HTML for the reader
-src/extension/   The Chrome extension: background worker, capture script, side panel, PDF reader
+src/extension/   The Chrome extension: background worker, capture script, side panel, mapper tab, PDF reader
 scripts/         Build, end-to-end test and live checks
 test/            Unit tests and the HTML fixture
 docs/            Phase notes, the Phase 1 output and side-panel screenshots
