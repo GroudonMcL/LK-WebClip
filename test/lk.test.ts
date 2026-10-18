@@ -5,6 +5,7 @@ import {
   MatchTier, NotAppendableError, ProjectIndex, appendedClip, findSources, isSource, newPageClip, rankLocal, resolveAppendTarget,
   siteName, sniffImageType, sourcePageBlocks, type IndexedResource,
 } from '../src/index.js'
+import { describeSource, importImage } from '../src/lk/images.js'
 
 function resource(id: string, name: string, parentId: string | null, extra: Partial<IndexedResource> = {}): IndexedResource {
   return {
@@ -163,5 +164,31 @@ describe('sniffImageType', () => {
   it('rejects HTML and SVG', () => {
     assert.equal(sniffImageType(new TextEncoder().encode('<!DOCTYPE html><html>')), undefined)
     assert.equal(sniffImageType(new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg">')), undefined)
+  })
+})
+
+describe('importImage', () => {
+  // A stand-in for the SDK client: records what would be sent.
+  const fakeLk = (upload: (req: { description?: string; data: Uint8Array }) => Promise<{ id: string; url?: string }>) =>
+    ({ assets: { uploadImage: upload } }) as unknown as Parameters<typeof importImage>[0]
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, ...new Array(2_000_000).fill(7)])
+  const dataUrl = `data:image/webp;base64,${Buffer.from(webp).toString('base64')}`
+
+  it('keeps a data URL (an image from a PDF) out of the asset description', async () => {
+    let description = ''
+    const result = await importImage(fakeLk(async (req) => ((description = req.description ?? ''), { id: 'a1', url: 'https://cdn.example/a1.webp' })), dataUrl, { name: 'Clipped image' })
+    assert.equal(result.ok, true)
+    assert.equal(description, 'Clipped image')
+  })
+
+  it('leaves a failed data URL image as a short note, not a link holding the whole image', async () => {
+    const result = await importImage(fakeLk(async () => { throw new Error('413 Request failed with status 413') }), dataUrl, { name: 'Clipped image', alt: 'Bolton' })
+    assert.equal(result.ok, false)
+    assert.ok(JSON.stringify(result.block).length < 300)
+    assert.match(plainText([result.block]), /Image not imported \(413 .*\): Bolton/)
+  })
+
+  it('still credits a web image by its address', () => {
+    assert.equal(describeSource('https://example.com/dragon.png'), 'Clipped from https://example.com/dragon.png')
   })
 })

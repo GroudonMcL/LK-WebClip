@@ -52,15 +52,27 @@ export async function importImage(
       data: fetched.data,
       contentType: fetched.contentType,
       name,
-      description: `Clipped from ${sourceUrl}`,
+      description: describeSource(sourceUrl),
       ...(folderId ? { folderId } : {}),
     })
     if (!asset.url) throw new Error('the upload returned no asset url')
     return { ok: true, assetId: asset.id, url: asset.url, block: image(asset.url, alt ?? name) }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
+    // An image carried inside the clip (from a PDF) has no address to link to, and its data URL is
+    // far too long to write into the page.
+    if (isDataUrl(sourceUrl)) return { ok: false, reason, block: p(`Image not imported (${reason})${alt ? `: ${alt}` : '.'}`) }
     return { ok: false, reason, block: p('Image not imported (', reason, '): ', link(sourceUrl, alt || sourceUrl)) }
   }
+}
+
+function isDataUrl(url: string): boolean {
+  return /^data:/i.test(url)
+}
+
+/** The asset's description: where the image came from, unless it came inside the clip as a data URL. */
+export function describeSource(url: string): string {
+  return isDataUrl(url) ? 'Clipped image' : `Clipped from ${url}`
 }
 
 /** Finds the clipper's asset folder at the library root, creating it the first time. */
