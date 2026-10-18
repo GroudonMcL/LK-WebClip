@@ -16,6 +16,7 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 | 3 | Fuzzy search, linking page names in the text, ambiguity handling, keeping the page list fresh | **Done.** See [docs/PHASE3.md](docs/PHASE3.md) |
 | 4 | Template filling: fill your LegendKeeper templates from a clip, by label matching and optional AI | **Done.** See [docs/PHASE4.md](docs/PHASE4.md) |
 | 5 | Complex tables, site-specific rules, Source deduplication | Next |
+| PDF | Reader page for PDFs: reflow two-column books into clean, clippable text | **Prototype.** See [docs/PDF.md](docs/PDF.md) |
 | 6 | Reliability: retries, duplicate protection, reviewing uncertain links | |
 
 ## Install

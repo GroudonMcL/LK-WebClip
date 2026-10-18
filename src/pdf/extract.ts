@@ -1,0 +1,123 @@
+import type { PDFPageProxy } from 'pdfjs-dist'
+import type { PageContent, PdfImage, PdfShape, PdfText } from './types.js'
+
+/**
+ * Reads one PDF page with pdf.js into positioned text, filled shapes and images.
+ *
+ * Coordinates are PDF points with the origin at the top left (y grows downwards), so they line
+ * up with the rendered page. pdf.js must be opened with `fontExtraProperties: true`, or the real
+ * font names (which tell headings, body text and stat blocks apart) are not available.
+ *
+ * `ops` is pdf.js's OPS table. It is passed in so the same code runs with the browser build in the
+ * extension and the legacy build in Node.
+ */
+export async function extractPage(page: PDFPageProxy, ops: Record<string, number>): Promise<PageContent> {
+  const viewport = page.getViewport({ scale: 1 })
+  const width = viewport.width
+  const height = viewport.height
+  const operators = await page.getOperatorList()
+  const content = await page.getTextContent()
+
+  const fontNames = new Map<string, string>()
+  const fontName = (id: string): string => {
+    let name = fontNames.get(id)
+    if (name === undefined) {
+      try {
+        const font = page.commonObjs.get(id) as { name?: string } | undefined
+        name = (font?.name ?? id).replace(/^[A-Z]{6}\+/, '')
+      } catch {
+        name = id
+      }
+      fontNames.set(id, name)
+    }
+    return name
+  }
+
+  const text: PdfText[] = []
+  for (const item of content.items) {
+    if (!('str' in item) || item.str === '') continue
+    const [a, b, c, d, e, f] = item.transform as number[]
+    const size = Math.hypot(c ?? 0, d ?? 0)
+    // Rotated text (spines, decorative labels) is left out: it is never part of the reading flow.
+    if (Math.abs(b ?? 0) > 0.01 || Math.abs(c ?? 0) > 0.01 || (a ?? 0) <= 0 || size < 1) continue
+    const font = fontName(item.fontName)
+    text.push({
+      str: item.str,
+      x: e ?? 0,
+      y: height - (f ?? 0),
+      w: item.width,
+      size,
+      font,
+      bold: /bold|black|heavy|semibold|demi/i.test(font),
+      italic: /italic|oblique/i.test(font),
+    })
+  }
+
+  // Walk the drawing operators, tracking the transform, to place images and filled shapes.
+  const names = new Map(Object.entries(ops).map(([k, v]) => [v, k]))
+  const images: PdfImage[] = []
+  const shapes: PdfShape[] = []
+  let ctm: Matrix = [1, 0, 0, 1, 0, 0]
+  const stack: Matrix[] = []
+  let fill = '#000000'
+  const fillStack: string[] = []
+  operators.fnArray.forEach((fn, i) => {
+    const args = operators.argsArray[i] as unknown[]
+    switch (names.get(fn)) {
+      case 'save': stack.push(ctm); fillStack.push(fill); break
+      case 'restore': ctm = stack.pop() ?? ctm; fill = fillStack.pop() ?? fill; break
+      case 'transform': ctm = multiply(ctm, args as Matrix); break
+      case 'paintFormXObjectBegin': {
+        stack.push(ctm); fillStack.push(fill)
+        const m = args[0] as Matrix | null
+        if (m) ctm = multiply(ctm, m)
+        break
+      }
+      case 'paintFormXObjectEnd': ctm = stack.pop() ?? ctm; fill = fillStack.pop() ?? fill; break
+      case 'setFillRGBColor': fill = String(args[0]); break
+      case 'setFillGray': case 'setFillCMYKColor': case 'setFillColorN': fill = 'other'; break
+      case 'paintImageXObject': case 'paintImageXObjectRepeat': {
+        const [id, pw, ph] = args as [string, number, number]
+        const box = toTopDown(transformBox(ctm, [0, 0, 1, 1]), height)
+        images.push({ id, width: pw, height: ph, ...box })
+        break
+      }
+      case 'constructPath': {
+        // [paint op, path data, [minX, minY, maxX, maxY]] in the current transform.
+        const [op, , minMax] = args as [number, unknown, number[] | null]
+        const paint = names.get(op)
+        if (!minMax || !paint || !/fill/i.test(paint)) break
+        const box = toTopDown(transformBox(ctm, minMax as [number, number, number, number]), height)
+        if (box.x1 - box.x0 < 1 || box.y1 - box.y0 < 1) break
+        shapes.push({ ...box, fill })
+        break
+      }
+    }
+  })
+
+  return { number: page.pageNumber, width, height, text, shapes, images }
+}
+
+type Matrix = [number, number, number, number, number, number]
+
+function multiply(m: Matrix, n: Matrix): Matrix {
+  return [
+    m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
+  ]
+}
+
+function transformBox(m: Matrix, [x0, y0, x1, y1]: [number, number, number, number]) {
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const [x, y] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]] as const) {
+    xs.push(m[0] * x + m[2] * y + m[4])
+    ys.push(m[1] * x + m[3] * y + m[5])
+  }
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }
+}
+
+function toTopDown(box: { x0: number; y0: number; x1: number; y1: number }, height: number) {
+  return { x0: box.x0, x1: box.x1, y0: height - box.y1, y1: height - box.y0 }
+}
