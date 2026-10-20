@@ -18,6 +18,8 @@ import { OnDeviceEngine } from '../src/fill/engines.js'
 import { withNewDefaults, withNewDerived } from '../src/extension/state.js'
 import { challengeTag, creatureLineTags, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
 import { inRankOrder } from '../src/lk/pages.js'
+import { DEFAULT_LINK_OPTIONS, linkClip } from '../src/clip/links.js'
+import { ProjectIndex } from '../src/lk/projectIndex.js'
 import { blockText, buildSlots, fillTree, forCopy, namesPage, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
@@ -567,6 +569,17 @@ describe('worked-out fields', () => {
     ]) })
     assert.equal(slotNamed(p, 'Initiative').origin, 'derived')
     assert.equal(slotNamed(p, 'Initiative').text, '+2 (12)')
+  })
+
+  it('keeps Initiative out of Armour Class when the project has an Initiative page (the clip is linked first)', () => {
+    const page = (id: string, name: string, aliases: string[] = []) => ({ id, name, parentId: null, aliases, tags: [], rank: id, isHidden: false, updatedAt: null, documents: [{ id: `${id}-d`, name: 'Main', type: 'page' }] })
+    const project = new ProjectIndex([page('init', 'Initiative'), page('ac', 'Armor Class'), page('par', 'Paralysed', ['Paralyzed']), page('sk', 'Skills')])
+    const raw = blocks(readFileSync(new URL('./fixtures/dndbeyond-tarrasque.html', import.meta.url), 'utf8'))
+    const clip = linkClip(raw, project, DEFAULT_LINK_OPTIONS).blocks
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Tarrasque', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED), nameOf: (id) => project.get(id)?.name })
+    assert.equal(slotNamed(p, 'Armour Class').text, '25')
+    assert.equal(slotNamed(p, 'Initiative').text, '+18 (28)')
+    assert.match(slotNamed(p, 'Immunities').text, /Paralyzed/)
   })
 
   it('in AI mode, takes the Initiative the clip states over an unticked AI guess and over working it out', () => {

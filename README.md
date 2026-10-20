@@ -45,7 +45,7 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
 
 Then in the panel:
 
-- **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Search forgives typos and word order (“grayhawk”, “dragon red”). It lists page names first, then aliases, then tags, then pages whose text matches; `#tag` lists every page with that tag. Each result shows where the page sits in your tree.
+- **Where:** pick **New page** (give it a name and choose the page to put it under) or **Add to a page** (choose the page; if it has several tabs, pick one). Both list every page; if the page you add to has only map, board or timeline tabs, the panel says so. Search forgives typos and word order (“grayhawk”, “dragon red”). It lists page names first, then aliases, then tags, then pages whose text matches; `#tag` lists every page with that tag. Each result shows where the page sits in your tree.
 - **Template** (when **Settings → Templates → Enable template filling** is on): pick one of your LegendKeeper templates, or leave it at “None (clip as usual)”.
   - For a **new page**, the page is made from the template and its fields are filled in from the clip. For **Add to a page**, the template’s main tab is filled in and added below the existing content, after a divider. Child pages of templates are not copied.
   - **Fill with**: **Labels** finds the template’s labels in the clip (“Armor Class 15”, a “Traits” heading, “STR / 8 (-1)”, table rows, “Label: value”). A 2024 stat block's ability table, with MOD and SAVE columns, fills each ability as “30 (+10)”, adding the saving throw only when it differs from the modifier: “11 (+0, Save +8)”, using synonyms such as AC = Armour Class. **AI** asks a language model to pick the parts of the clip for each field. **Labels then AI** asks the AI only about what labels left empty.
@@ -64,14 +64,16 @@ Then in the panel:
   Each new Source page gets a Backlinks collection, so it lists every page that cites it.
 - **Turn web links into page links:** a link whose text is the name of one of your pages becomes a LegendKeeper link to that page.
 - **Link page names in the text:** names of your pages written in the clip become LegendKeeper links. It matches whole words only, and the longest name wins, so “Red Dragon” beats “Dragon”. Headings, code and existing links are left alone.
-- **Only exact page names** are linked by default, because LegendKeeper shows a page link as the page’s name: linking “attack roll” to the page “Attack Rolls” would change the clip’s words. So “attack roll”, “attack rolls” and an alias like “Weapon Attack” stay as written, and only “Attack Rolls” becomes a link. Untick **Settings → Linking → Link only exact page names** to link aliases, plurals (“Red Dragons”), possessives and, if you also untick case matching, other capitalisations, accepting that LegendKeeper will show them as the page’s name.
+- **Only exact page names and aliases** are linked by default, because LegendKeeper shows a page link as the page’s name: linking “attack rolls” to the page “Attack Roll” would change the clip’s words. An alias you gave a page counts as one of its names, so “Paralyzed” links to a page “Paralysed” with the alias “Paralyzed”. “attack rolls” (a plural) stays as written. Untick **Settings → Linking → Link only exact page names** to link plurals (“Red Dragons”), possessives and, if you also untick case matching, other capitalisations too, accepting that LegendKeeper will show them as the page’s name.
+- **Web links** in the clip whose text is a page’s name or alias always become page links, every time they appear, even with “first mention only” on.
+- **Bold labels** at the start of a line, such as “**Initiative** +18 (28)” or “**Skills**”, are never linked, so template filling still reads them as labels.
 - **Links to your pages** lists every proposed link before you import. Untick any you don't want. When a name fits several pages, such as an alias shared by two NPCs, it is left unlinked and shown first, with a menu to pick the right page.
 - **Import images:** copies each image into your project's asset library (folder "LK Web Clipper"). If an image can't be copied, the clip keeps a link to it instead.
 - Check the **Preview** and click **Create page** or **Add to page**. When you add to a page, the clip goes at the end after a divider. Your existing content is never overwritten: if someone edits the page at the same moment, the clipper re-reads it and tries again.
 
 The panel remembers your last destination and Source for each project, so repeated clipping is a right-click and one click.
 
-In **Settings → Linking** you can link aliases and other wordings too (see above), and choose whether only the first mention of each page in a clip is linked (the default) or every mention.
+In **Settings → Linking** you can link aliases and other wordings too (see above), and choose whether only the first mention of each page in a clip’s text is linked (the default) or every mention.
 
 The page list refreshes itself: when the panel opens or comes back into view after 10 minutes, every 10 minutes while it is open, and when a search turns up a page the list doesn't have. ⟳ refreshes it immediately, and a refresh never resets what you have filled in.
 

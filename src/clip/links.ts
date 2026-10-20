@@ -6,15 +6,16 @@ import { mapBlocks } from './htmlToBlocks.js'
  * Connects a clip to the rest of the wiki, in two passes over its text:
  *
  * 1. Hyperlinks. A link whose text names a page (by name, then alias, ignoring case, then without
- *    a plural or possessive ending) becomes a LegendKeeper mention of that page. Other links stay.
+ *    a plural or possessive ending) becomes a LegendKeeper mention of that page, every time it
+ *    appears: a web link to a page you have is never kept. Other links stay.
  * 2. Plain text. Page names and aliases written in the text become mentions. Matching works on
  *    whole words, prefers the longest name ("Red Dragon" over "Dragon"), is case-sensitive by
  *    default (the way your aliases suggest LegendKeeper's own auto-linker works), and leaves
- *    code, headings, existing links and mentions alone.
+ *    code, headings, existing links, mentions and bold field labels ("**Initiative** +18") alone.
  *
  * LegendKeeper's editor shows a mention as its page's name, whatever the clip said. So by default
- * (`exactNames`) only text written exactly as a page's name is linked, and the clip's words never
- * change; aliases, plurals and other capitalisations stay as they are.
+ * (`exactNames`) only text written exactly as a page's name or one of its aliases is linked;
+ * plurals and other capitalisations stay as they are.
  *
  * Text that names several pages is never linked by guesswork: it is reported as ambiguous, and
  * the user can pick a page for it. Every proposed link is a "term" the user can switch off.
@@ -27,12 +28,11 @@ export interface LinkOptions {
   text: boolean
   /** Pass 2 matches names with their exact capitalisation (a lowercase name may still start a sentence). */
   matchCase: boolean
-  /** Link only the first mention of each page in the clip; later web links to it stay web links. */
+  /** Pass 2 links only the first mention of each page in the clip. Web links to pages are always resolved. */
   firstOnly: boolean
   /**
-   * Link only text written exactly as a page's name (same words and capitals), so the clip's
-   * wording is kept: LegendKeeper shows a mention as the page's name. Off: aliases, plurals and,
-   * without `matchCase`, other capitalisations are linked too.
+   * Link only text written exactly as a page's name or alias (same words and capitals). Off:
+   * plurals, possessives and, without `matchCase`, other capitalisations are linked too.
    */
   exactNames?: boolean
   /** Pages never linked to, such as the page the clip is being added to. */
@@ -92,7 +92,7 @@ export function linkClip(blocks: Block[], index: ProjectIndex, options: LinkOpti
 
   const linkRuns = (runs: Run[]): Run[] => {
     let out = options.hyperlinks ? resolveHyperlinks(runs, index, options, term, linkedPages) : runs
-    if (matcher) out = linkPlainText(out, matcher, options, exclude, term, linkedPages)
+    if (matcher) out = linkPlainText(out, matcher, options, exclude, term, linkedPages, startsBold(runs))
     return out
   }
 
@@ -135,8 +135,9 @@ function resolveHyperlinks(runs: Run[], index: ProjectIndex, options: LinkOption
     const label = text.trim()
     const candidates = label ? hyperlinkCandidates(label, index, options.exactNames).filter((c) => !exclude.has(c.id)) : []
     const entry = candidates.length > 0 ? term('hyperlink', label, candidates) : undefined
-    // With "first mention only", a repeated link to an already-linked page keeps its web address.
-    if (entry?.linkedTo && !(options.firstOnly && linkedPages.has(entry.linkedTo))) {
+    // Every link to a page becomes a mention, "first mention only" or not: the web address would
+    // only lead away from the wiki.
+    if (entry?.linkedTo) {
       entry.linked++
       linkedPages.add(entry.linkedTo)
       if (text.startsWith(' ')) out.push({ text: ' ' })
@@ -158,7 +159,10 @@ function resolveHyperlinks(runs: Run[], index: ProjectIndex, options: LinkOption
 export function hyperlinkCandidates(label: string, index: ProjectIndex, exactNames = false): IndexedResource[] {
   const clean = tidy(label)
   const pages = index.pages()
-  if (exactNames) return pages.filter((r) => tidy(r.name) === clean)
+  if (exactNames) {
+    const named = pages.filter((r) => tidy(r.name) === clean)
+    return named.length > 0 ? named : pages.filter((r) => r.aliases.some((a) => tidy(a) === clean))
+  }
   const readings: ((r: IndexedResource) => boolean)[] = [
     (r) => tidy(r.name) === clean,
     (r) => r.aliases.some((a) => tidy(a) === clean),
@@ -192,7 +196,17 @@ export function singularForms(text: string): string[] {
 
 // ------------------------------------------------------------------------- pass 2: plain text
 
-function linkPlainText(runs: Run[], matcher: PhraseMatcher, options: LinkOptions, exclude: ReadonlySet<string>, term: TermFn, linkedPages: Set<string>): Run[] {
+/**
+ * A paragraph starting with bold text is a line of fields ("**AC** 25 **Initiative** +18 (28)") or
+ * an entry ("**Multiattack.** The tarrasque…"). Its bold text is a label, which a mention (never
+ * bold) would hide from the template filling, so it is not linked.
+ */
+function startsBold(runs: Run[]): boolean {
+  const first = runs.find((r) => !('text' in r) || r.text.trim() !== '')
+  return !!first && 'text' in first && !!first.bold
+}
+
+function linkPlainText(runs: Run[], matcher: PhraseMatcher, options: LinkOptions, exclude: ReadonlySet<string>, term: TermFn, linkedPages: Set<string>, skipBold = false): Run[] {
   const out: Run[] = []
   let segment: Extract<Run, { text: string }>[] = []
   const flush = () => {
@@ -201,7 +215,7 @@ function linkPlainText(runs: Run[], matcher: PhraseMatcher, options: LinkOptions
   }
   for (const run of runs) {
     // Links, code, mentions and line breaks bound the stretches of plain text that get scanned.
-    if ('text' in run && !run.link && !run.code) segment.push(run)
+    if ('text' in run && !run.link && !run.code && !(skipBold && run.bold)) segment.push(run)
     else {
       flush()
       out.push(run)
@@ -327,13 +341,13 @@ export class PhraseMatcher {
   constructor(
     readonly index: ProjectIndex,
     private matchCase: boolean,
-    /** Names only, with their exact capitals: no aliases, and no lowercase first letter. */
+    /** Names and aliases with their exact capitals only: no lowercase first letter. */
     private readonly exactNames = false,
   ) {
     if (exactNames) this.matchCase = true
     for (const resource of index.pages()) {
       this.add(resource.name, resource, 'names')
-      if (!exactNames) for (const alias of resource.aliases) this.add(alias, resource, 'aliases')
+      for (const alias of resource.aliases) this.add(alias, resource, 'aliases')
     }
   }
 
