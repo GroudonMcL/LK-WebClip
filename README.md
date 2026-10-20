@@ -107,7 +107,7 @@ In **Labels then AI writes**:
 - **What it can't write:** long sections (Traits, Actions, Description…) still take the clip's own paragraphs.
 - **Checks on written values:** a written value is ticked only when every number and name in it is in the clip. It must also not leave out part of the clip line it rewrites; if it does, the clip's line is used instead.
 
-The page name is never put in a field. Fields the clip doesn't state but other fields decide are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. The default writes Initiative as the Dexterity modifier and, in brackets, 10 plus it: Dexterity 12 (+1) gives “+1 (11)”. A rule also completes a value the clip only starts (“Initiative +1” becomes “+1 (11)”). See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
+The page name is never put in a field. Fields the clip doesn't state but other fields decide are worked out by rules you can edit in **Settings → Templates → Worked-out fields**. The default writes Initiative as the Dexterity modifier and, in brackets, 10 plus it: Dexterity 12 (+1) gives “+1 (11)”. A rule also completes a value the clip only starts (“Initiative +1” becomes “+1 (11)”). A value the clip states in full, like a 2024 stat block’s “Initiative +18 (28)”, is always used as it is, in every **Fill with** mode, since it can include more than Dexterity. See [docs/PHASE4.md](docs/PHASE4.md#keeping-the-ai-honest).
 
 ## Where your API key is kept
 

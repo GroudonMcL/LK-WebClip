@@ -195,7 +195,11 @@ function tableCandidates(table: AnyBlock, i: number, add: (c: Omit<Candidate, 'i
     return out
   }
   // A header row over one data row: each column is a pair (STR / 18 (+4)).
-  if (rows.length === 2 && cells(rows[0]!).length >= 2 && cells(rows[0]!).length === cells(rows[1]!).length && cells(rows[0]!).every((c) => c.header)) {
+  const abilityRow = (row: AnyBlock) => {
+    const [first, ...rest] = cells(row)
+    return !!first && abilityValue(blockText(first).trim(), rest.map((cell) => blockText(cell).trim())) !== undefined
+  }
+  if (rows.length === 2 && cells(rows[0]!).length >= 2 && cells(rows[0]!).length === cells(rows[1]!).length && cells(rows[0]!).every((c) => c.header) && !abilityRow(rows[1]!)) {
     cells(rows[0]!).forEach((header, c) => {
       const value = cellRuns(cells(rows[1]!)[c]!)
       const text = runsText(value).trim()

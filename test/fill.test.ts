@@ -159,6 +159,23 @@ describe('planFill', () => {
     assert.equal(slotNamed(p, 'Proficiency Bonus').text, '+2')
   })
 
+  it('uses the Initiative a 2024 stat block states, rather than working it out from Dexterity', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-tarrasque.html', import.meta.url), 'utf8'))
+    for (const mode of ['labels', 'labels-ai', 'ai'] as const) {
+      const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Tarrasque', site: 'dndbeyond.com', synonyms, rules: [], mode, overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+      assert.equal(slotNamed(p, 'Initiative').text, '+18 (28)', mode)
+      assert.notEqual(slotNamed(p, 'Initiative').origin, 'derived', mode)
+      if (mode !== 'ai') assert.equal(slotNamed(p, 'Dexterity').text, '11 (+0, Save +9)', mode)
+    }
+    // Only the start stated: still completed from Dexterity.
+    const start = blocks('<p><strong>Initiative</strong> +3</p><p><strong>DEX</strong> 16 (+3)</p>')
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip: start, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Initiative').text, '+3 (13)')
+    // A table of one ability under MOD and SAVE is a row, not columns.
+    const one = blocks('<table><tr><th></th><th></th><th>Mod</th><th>Save</th></tr><tr><th>Dex</th><td>11</td><td>+0</td><td>+9</td></tr></table>')
+    assert.equal(slotNamed(planFill({ tree: statblock.tree, templateId: statblock.id, clip: one, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {} }), 'Dexterity').text, '11 (+0, Save +9)')
+  })
+
   it('reads a 2024 ability table (score, MOD, SAVE), adding the save only when it differs', () => {
     const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-abilities.html', import.meta.url), 'utf8'))
     const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Ancient Red Dragon', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
@@ -550,6 +567,21 @@ describe('worked-out fields', () => {
     ]) })
     assert.equal(slotNamed(p, 'Initiative').origin, 'derived')
     assert.equal(slotNamed(p, 'Initiative').text, '+2 (12)')
+  })
+
+  it('in AI mode, takes the Initiative the clip states over an unticked AI guess and over working it out', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-tarrasque.html', import.meta.url), 'utf8'))
+    const run = (ai?: Map<string, AiSuggestion>) => planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Tarrasque', site: 'dndbeyond.com', synonyms, rules: [], mode: 'ai', overrides: {}, derived: parseDerived(DEFAULT_DERIVED), ...(ai ? { ai } : {}) })
+    const first = run()
+    const id = (label: string) => slotNamed(first, label).slot.id
+    const dex = clip.findIndex((b) => b.kind === 'table')
+    const p = run(new Map<string, AiSuggestion>([
+      [id('Dexterity'), { blocks: [dex], value: '' }],
+      [id('Initiative'), { blocks: [], value: '+0 (10)' }],
+    ]))
+    assert.equal(slotNamed(p, 'Initiative').text, '+18 (28)')
+    assert.equal(slotNamed(p, 'Initiative').status, 'filled')
+    assert.equal(slotNamed(p, 'Initiative').warning, undefined)
   })
 
   it('never replaces a value the clip states', () => {
