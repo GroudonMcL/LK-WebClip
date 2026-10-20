@@ -75,7 +75,7 @@ try {
   await page.evaluate((s) => chrome.storage.session.set({ 'mapper:session': s }), goblin)
   await page.locator('#m-clip .card').first().waitFor()
   check((await page.locator('#m-title').textContent()) === 'Goblin → Statblock Template', 'shows the clip and template')
-  check((await page.locator('#m-counts').textContent())?.includes('16 filled'), 'label matching filled 16 fields')
+  check((await page.locator('#m-counts').textContent())?.includes('17 filled'), 'label matching filled 17 fields')
   check(await zone(page, 'Armour Class').locator('.card').filter({ hasText: '15 (leather armor, shield)' }).isVisible(), 'Armour Class holds “15 (leather armor, shield)”')
   check(await zone(page, 'Armour Class').locator('.origin').filter({ hasText: 'Label · Synonym' }).isVisible(), '…with a Label · Synonym badge')
   check(await page.locator('.wf-infobox').count() > 0, 'the wireframe has the infobox')
@@ -134,7 +134,8 @@ try {
   check(await zone(page, 'Hit Points').locator('.zone-empty').isVisible(), 'clear a field: it is marked empty')
   check(await page.locator('#m-tray .card').filter({ hasText: '7 (2d6)' }).isVisible(), '…and its value goes to Unused')
 
-  // Selecting part of a card and making a card of it.
+  // Selecting part of a card and making a card of it. The size and type line filled its field; clear it first.
+  await zone(page, 'Size, Creature Type, Alignment').locator('[data-action="clear"]').click()
   const line = page.locator('#m-tray .card').filter({ hasText: 'Small Humanoid' })
   await line.locator('[data-action="split"]').click()
   check(await page.locator('#m-tray .card.splitting').isVisible(), '✂ makes a card’s text selectable')

@@ -16,7 +16,7 @@ import { buildNotesJob, NOTES_SYSTEM_PROMPT, parseNotesAnswer } from '../src/fil
 import { isWritable, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.js'
 import { OnDeviceEngine } from '../src/fill/engines.js'
 import { withNewDefaults, withNewDerived } from '../src/extension/state.js'
-import { challengeTag, creatureLineTags, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
+import { challengeTag, creatureLineTags, isCreatureLine, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
 import { inRankOrder } from '../src/lk/pages.js'
 import { DEFAULT_LINK_OPTIONS, linkClip } from '../src/clip/links.js'
 import { ProjectIndex } from '../src/lk/projectIndex.js'
@@ -37,6 +37,8 @@ const statblock = template('Statblock_Template')
 const plan = (overrides: Partial<FillInput> = {}) =>
   planFill({ tree: statblock.tree, templateId: statblock.id, clip: goblin, title: 'Goblin', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, ...overrides })
 const slotNamed = (p: ReturnType<typeof plan>, label: string) => p.slots.find((s) => s.slot.label === label)!
+/** The size, type and alignment field cleared on the review screen, which leaves its line unused. */
+const sizeCleared = () => ({ [slotNamed(plan(), 'Size, Creature Type, Alignment').slot.id]: { choice: 'empty' } })
 const text = (list: Block[]) => list.map((b) => blockText(b as AnyBlock)).join('\n')
 
 describe('labels', () => {
@@ -156,8 +158,11 @@ describe('planFill', () => {
     assert.equal(slotNamed(p, 'Hit Points').origin, 'label')
     assert.match(slotNamed(p, 'Actions').text, /Scimitar[\s\S]*Shortbow/)
     assert.equal(slotNamed(p, 'Initiative').status, 'empty')
+    // The unlabelled line under the name is read as the size, type and alignment.
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').text, 'Small Humanoid (Goblinoid), Neutral Evil')
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').origin, 'similar')
     // The name line is the page title, so it isn't repeated in the unused content.
-    assert.equal(text(p.leftovers), 'Small Humanoid (Goblinoid), Neutral Evil')
+    assert.equal(text(p.leftovers), '')
     assert.equal(slotNamed(p, 'Proficiency Bonus').text, '+2')
   })
 
@@ -289,7 +294,8 @@ describe('the description under a stat block', () => {
     assert.equal(description.origin, 'label')
     assert.deepEqual(description.candidate!.blocks.map((b) => b.kind), ['paragraph', 'paragraph', 'paragraph', 'table', 'image'])
     assert.match(description.text, /^The test beast is a legend[\s\S]*Beast Evidence[\s\S]*A scale the size of a shield\./)
-    assert.deepEqual(p.leftovers.map((b) => b.kind), ['paragraph'], 'only the size and type line is left over')
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').text, 'Gargantuan Monstrosity (Titan), Unaligned')
+    assert.deepEqual(p.leftovers, [], 'nothing is left over')
   })
 
   it('writes the description under the template’s Description heading', () => {
@@ -315,13 +321,14 @@ describe('compose and fill', () => {
     const filled = applyComposition(statblock.tree, compose(statblock.tree, p, { sourceHeading: heading, keepUnfilled: false }))
     const main = filled.docs[0]!
     const box = main[1] as AnyBlock
-    const firstRows = (box.rows[0].rows as AnyBlock[])
+    assert.match(blockText(box), /^Small Humanoid \(Goblinoid\), Neutral Evil/, 'the size, type and alignment line tops the infobox')
+    const firstRows = ((box.rows as AnyBlock[]).find((group) => (group.rows as AnyBlock[] | undefined)?.some((r) => r.key === 'Armour Class'))!.rows as AnyBlock[])
     assert.equal(firstRows[0]!.id, 'uyi47pta')
     assert.deepEqual(firstRows.map((r) => r.key), ['Armour Class', 'Hit Points', 'Speed'], 'the empty Initiative row is gone')
     const all = JSON.stringify(main)
     assert.ok(!all.includes('Bonus Actions') && !all.includes('[Description text]'))
     assert.equal(main[0], heading, 'the credit comes first')
-    assert.deepEqual(main.slice(-2).map((b) => b.kind), ['rule', 'paragraph'], 'one divider, then the unused content')
+    assert.notEqual(main.at(-1)!.kind, 'rule', 'nothing is unused, so no divider for it')
   })
 
   it('keeps placeholders when asked', () => {
@@ -342,7 +349,7 @@ describe('compose and fill', () => {
   })
 
   it('without a credit, leaves out the heading and still adds unused content', () => {
-    const filled = applyComposition(statblock.tree, compose(statblock.tree, plan(), { keepUnfilled: false }))
+    const filled = applyComposition(statblock.tree, compose(statblock.tree, plan({ overrides: sizeCleared() }), { keepUnfilled: false }))
     const tail = filled.docs[0]!.slice(-2)
     assert.deepEqual(tail.map((b) => b.kind), ['rule', 'paragraph'])
     assert.ok(!filled.docs[0]!.some((b) => b.kind === 'heading' && blockText(b as AnyBlock).startsWith('From ')))
@@ -374,7 +381,8 @@ describe('compose and fill', () => {
 })
 
 describe('AI job', () => {
-  const p = plan({ mode: 'labels-ai' })
+  // The size and type line, cleared from its field, so there is an unused line for the AI.
+  const p = plan({ mode: 'labels-ai', overrides: sizeCleared() })
   const slots = slotsForAi(p, 'labels-ai', {})
 
   it('numbers the unused blocks and lists only the empty fields', () => {
@@ -437,7 +445,7 @@ describe('AI answers checked against the clip (Assassin)', () => {
     const p = run()
     const slots = slotsForAi(p, 'labels-ai', {})
     const offered = blocksForAi(p, slots, 'labels-ai', assassin.length, synonyms).map((i) => blockText(assassin[i] as AnyBlock))
-    assert.deepEqual(offered, ['Medium Humanoid (Any Race), Any Non-Good Alignment'])
+    assert.deepEqual(offered, [], 'and the size and type line is read as one, so nothing is left for the AI')
   })
 
   it('leaves out the page name the AI included with the creature type', () => {
@@ -696,12 +704,12 @@ describe('Labels then AI writes', () => {
   it('lets the AI write short fields only, and gives it the notes', () => {
     const p = run()
     const slots = slotsForAi(p, 'labels-ai-write', {})
-    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Size, Creature Type, Alignment', 'Resistances', 'Immunities'])
+    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Resistances', 'Immunities'], 'the size and type line filled its field already')
     assert.ok(!slots.some((s) => s.label === 'Initiative'), 'a worked-out field isn’t asked about')
-    const job = buildAiJob({ slots, clip: goblin, blockIndexes: p.unusedBlockIndexes, title: 'Goblin', labels: p.blockLabels, write: { notes: DND5E_STATBLOCK.text } })!
+    const job = buildAiJob({ slots, clip: goblin, blockIndexes: goblin.map((_, i) => i), title: 'Goblin', labels: p.blockLabels, write: { notes: DND5E_STATBLOCK.text } })!
     assert.equal(job.system, WRITE_SYSTEM_PROMPT)
     assert.match(job.prompt, /Notes about this template:\nA Dungeons & Dragons/)
-    assert.match(job.prompt, /"Size, Creature Type, Alignment" .* — write: a short value/)
+    assert.match(job.prompt, /"Resistances" .* — write: a short value/)
     assert.match(job.prompt, /"Legendary Actions" .* — paragraphs or a section: give block numbers/)
   })
 
@@ -821,6 +829,23 @@ describe('stat block tags', () => {
     assert.deepEqual(creatureLineTags('Medium or Small Humanoid, Unaligned'), ['Medium', 'Small', 'Humanoid', 'Unaligned'])
     assert.deepEqual(creatureLineTags('Large Swarm of Tiny Beasts, unaligned'), ['Large', 'Swarm of Tiny Beasts', 'Unaligned'])
     assert.deepEqual(creatureLineTags('Gargantuan Dragon'), ['Gargantuan', 'Dragon'])
+  })
+
+  it('recognises the size, type and alignment line, and not a sentence that starts with a size', () => {
+    for (const line of ['Gargantuan Monstrosity (Titan), Unaligned', 'Small Humanoid (Goblinoid), Neutral Evil', 'medium undead, neutral evil', 'Medium or Small Humanoid, Unaligned', 'Large Swarm of Tiny Beasts, unaligned', 'Gargantuan Dragon']) {
+      assert.ok(isCreatureLine(line), line)
+    }
+    for (const line of ['Large stones block the way.', 'Armor Class 15', 'Medium: a size', 'Tarrasque', 'Huge creatures and larger cannot fit through the narrow tunnels that lead into the lair, so the beast waits']) {
+      assert.ok(!isCreatureLine(line), line)
+    }
+  })
+
+  it('fills the line and tags a 2024 stat block without its subtype (Monstrosity, not Monstrosity (Titan))', () => {
+    const lore = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-lore.html', import.meta.url), 'utf8'))
+    const p = plan({ clip: lore, title: 'Test Beast' })
+    assert.equal(slotNamed(p, 'Size, Creature Type, Alignment').text, 'Gargantuan Monstrosity (Titan), Unaligned')
+    assert.deepEqual(statblockTags(p, synonyms), ['Gargantuan', 'Monstrosity', 'Unaligned'])
+    assert.deepEqual(statblockTags(plan(), synonyms), ['Small', 'Humanoid', 'Neutral Evil', 'CR 1/4'], 'the goblin, with no typing')
   })
 
   it('writes the challenge rating as "CR n"', () => {

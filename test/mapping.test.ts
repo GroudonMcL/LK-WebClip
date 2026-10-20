@@ -204,7 +204,8 @@ describe('mapper: moving cards', () => {
   })
 
   it('splits a paragraph in the unused content', () => {
-    const { base, mapping } = setup('goblin')
+    const { base, mapping: filled } = setup('goblin')
+    const mapping = clearSlot(filled, slotId(base, 'Size, Creature Type, Alignment'))
     const line = cardWith(base, (t) => t.startsWith('Small Humanoid'), 'block')
     const split = cut(base, mapping, line.id, 0, 'Small Humanoid (Goblinoid)'.length)
     const m = place(base, split.mapping, split.piece!, slotId(base, 'Size, Creature Type, Alignment'))
@@ -239,8 +240,9 @@ describe('mapper: moving cards', () => {
     const result = applyMapping(base, mapping)
     const { slotOf, unused } = placements(base, mapping, result)
     assert.equal(slotOf.get(cardWith(base, (t) => t.startsWith('Scimitar'), 'block').id), slotId(base, 'Actions'))
-    assert.deepEqual(unused.map((id) => base.cards.find((c) => c.id === id)!.text), ['Small Humanoid (Goblinoid), Neutral Evil'])
-    assert.deepEqual(summarize(result), { filled: 16, empty: 7, unused: 1, toChoose: 0 })
+    assert.equal(slotOf.get(cardWith(base, (t) => t.startsWith('Small Humanoid'), 'block').id), slotId(base, 'Size, Creature Type, Alignment'))
+    assert.deepEqual(unused, [])
+    assert.deepEqual(summarize(result), { filled: 17, empty: 6, unused: 0, toChoose: 0 })
   })
 })
 

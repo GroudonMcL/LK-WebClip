@@ -169,7 +169,7 @@ try {
   await panel.locator('.field', { hasText: 'Template' }).locator('select').first().selectOption(template.id)
   await panel.locator('.map-summary').waitFor()
   const summary = await panel.locator('.map-summary').innerText()
-  check(/17\s*filled/.test(summary) && /1\s*unused/.test(summary), `the panel shows the counts, Initiative worked out from Dexterity (${summary.split('\n').slice(0, 3).join(' ')})`)
+  check(/18\s*filled/.test(summary) && /0\s*unused/.test(summary), `the panel shows the counts, Initiative worked out from Dexterity (${summary.split('\n').slice(0, 3).join(' ')})`)
   check(!(await panel.locator('.template-fields li').count()), 'the dropdown review list is gone')
   if (shots) await panel.screenshot({ path: join(shots, 'panel-summary.png'), fullPage: true })
 
@@ -208,7 +208,7 @@ try {
   check(blockText(field(main, 'Legendary Actions')!).startsWith('Shortbow.'), 'Legendary Actions holds Shortbow')
   check(!blockText(field(main, 'Actions')!).includes('Shortbow') && blockText(field(main, 'Actions')!).startsWith('Scimitar.'), 'Actions kept Scimitar only')
   check(textOf(main as Block[]).includes('Resistances: +2'), 'Resistances holds the proficiency bonus')
-  check(textOf(main as Block[]).includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the unused line is at the end of the page')
+  check(textOf(main as Block[]).includes('Small Humanoid (Goblinoid), Neutral Evil'), 'the size, type and alignment line is in the page')
   if (shots) await mapper.screenshot({ path: join(shots, 'mapper-imported.png') })
 
   // The remembered rule, in Settings.

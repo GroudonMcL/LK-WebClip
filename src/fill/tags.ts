@@ -30,6 +30,22 @@ export function titleCase(text: string): string {
     .join(' ')
 }
 
+/**
+ * Whether a line is a creature's size, type and alignment: "Gargantuan Monstrosity (Titan),
+ * Unaligned", "Medium or Small Humanoid, Neutral". Stat blocks give it with no label.
+ */
+export function isCreatureLine(line: string): boolean {
+  const text = line.replace(/\s+/g, ' ').trim()
+  // A sentence ("Large stones block the way.") is not one; the line has no full stop and few words.
+  if (text.length > 100 || text.includes(':') || /[.!?]$/.test(text) || text.split(' ').length > 12) return false
+  return new RegExp(`^(?:${SIZES.join('|')})(?:\\s*(?:or|/)\\s*(?:${SIZES.join('|')}))?\\s+\\p{L}[^,]{0,60}(?:,[^,]{1,50})?$`, 'iu').test(text)
+}
+
+/** The fields that hold that line. */
+export function isCreatureLineField(key: string, synonyms: Synonyms): boolean {
+  return LINE_FIELDS.some((field) => compareLabels(key, field, synonyms) !== undefined)
+}
+
 /** Size, type and alignment tags from a line like "Small Fey (Goblinoid), Typically Chaotic Neutral". */
 export function creatureLineTags(line: string): string[] {
   const text = line.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim()

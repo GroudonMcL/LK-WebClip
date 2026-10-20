@@ -3,6 +3,7 @@ import { extractCandidates, goneBlocks, leftoverBlocks, overlaps, type Candidate
 import { isWritable } from './ai.js'
 import { applyDerived, completes, type DerivedRule } from './derived.js'
 import { cleanLabel, compareLabels, LabelMatch, namedMatch, type Synonyms } from './labels.js'
+import { isCreatureLine, isCreatureLineField } from './tags.js'
 import { blockText, blocksToRuns, buildSlots, mentionsIn, runsText, SIDEBAR, withNames, type AnyBlock, type Slot, type SlotFill, type TemplateTree } from './template.js'
 
 /**
@@ -391,6 +392,23 @@ function plan(input: FillInput): FillPlan {
       const state = states.get(slot.id)!
       state.options.unshift(pick.candidate)
       state.warning = pick.warning
+    }
+  }
+
+  // A stat block gives the creature's size, type and alignment with no label ("Gargantuan
+  // Monstrosity (Titan), Unaligned"): the first unused line like that fills the field for it. It
+  // comes after the AI only so an answer the AI was asked for is still checked; the AI isn't asked
+  // about a field this fills.
+  if (input.mode !== 'ai') {
+    for (const slot of fillable.filter((s) => (s.kind === 'text' || s.kind === 'rich') && states.get(s.id)!.status === 'empty' && !input.overrides[s.id]?.choice && isCreatureLineField(s.key, input.synonyms))) {
+      const i = input.clip.findIndex((block, i) => block.kind === 'paragraph' && !overlaps([`b${i}`], used) && (blockLabels.get(i)?.labels.length ?? 0) === 0 && isCreatureLine(blockText(block as AnyBlock)))
+      if (i < 0) continue
+      const block = input.clip[i]!
+      const line: Candidate = { id: `line:b${i}`, label: 'Size, type and alignment', key: slot.key, kind: 'pair', runs: (block as AnyBlock).content as Run[], blocks: [block], text: blockText(block as AnyBlock).trim(), units: [`b${i}`] }
+      assign(slot, line, 'similar')
+      const state = states.get(slot.id)!
+      state.options.unshift(line)
+      state.note = 'Read as the creature’s size, type and alignment.'
     }
   }
 
