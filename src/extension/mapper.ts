@@ -18,6 +18,7 @@ import {
 import type { SlotOrigin } from '../fill/plan.js'
 import { SIDEBAR, type AnyBlock, type Slot } from '../fill/template.js'
 import { clear, el } from './dom.js'
+import { initLayout, setSidebarHidden, sidebarHidden } from './mapperLayout.js'
 import { IMPORT_KEY, MAPPING_KEY, readSession, SESSION_KEY, STATUS_KEY, writeSession, type ImportStatus, type MapperSession, type MappingMessage } from './mapperState.js'
 
 const BADGES: Record<SlotOrigin, string> = {
@@ -37,6 +38,7 @@ const undoButton = document.getElementById('m-undo') as HTMLButtonElement
 const resetButton = document.getElementById('m-reset') as HTMLButtonElement
 const cutButton = document.getElementById('m-cut') as HTMLButtonElement
 const toastBox = document.getElementById('m-toast')!
+const gridBox = document.getElementById('m-app')!
 
 let session: MapperSession | undefined
 let mapping: Mapping
@@ -60,6 +62,7 @@ let status: ImportStatus | undefined
 void start()
 
 async function start(): Promise<void> {
+  initLayout(gridBox, wireBox)
   session = await readSession<MapperSession>(SESSION_KEY)
   if (session) {
     const saved = await readSession<MappingMessage>(MAPPING_KEY)
@@ -262,8 +265,25 @@ function renderWire(cards: Map<string, Card>, bySlot: Map<string, MappedSlot>): 
     ? el('div', { class: 'wf-tabs', role: 'tablist' }, ...tree.docs.map((doc, i) => el('button', { type: 'button', role: 'tab', 'aria-selected': String(i === tab), class: i === tab ? 'on' : '', 'data-action': 'tab', 'data-tab': String(i) }, doc.name || 'Main')))
     : null
   const page = el('div', { class: 'wf-page' }, ...renderBlocks((tree.docs[tab]?.blocks ?? []) as AnyBlock[], [], tab, ctx))
-  const sidebar = tree.properties.length ? el('div', { class: 'wf-sidebar' }, el('h3', {}, 'Sidebar'), ...renderBlocks(tree.properties as unknown as AnyBlock[], [], SIDEBAR, ctx)) : null
-  clear(wireBox, el('h2', {}, 'Template'), tabs, el('div', { class: `wf-layout${sidebar ? '' : ' no-sidebar'}` }, page, sidebar))
+  clear(wireBox, el('h2', {}, 'Template'), tabs, el('div', { class: `wf-layout${!tree.properties.length ? ' no-sidebar' : sidebarHidden() ? ' sidebar-hidden' : ''}` }, page, ...renderSidebar(ctx)))
+}
+
+/** The template's sidebar, which can be hidden to give the page more room, with its divider. */
+function renderSidebar(ctx: WireContext): Node[] {
+  const properties = session!.context.tree.properties
+  if (!properties.length) return []
+  if (sidebarHidden()) {
+    const filled = [...ctx.bySlot.values()].filter((s) => s.slot.doc === SIDEBAR && s.status === 'filled').length
+    return [el('div', { class: 'wf-sidebar collapsed' },
+      el('button', { type: 'button', class: 'show', 'data-action': 'sidebar', title: 'Show the sidebar', 'aria-expanded': 'false' }, `Sidebar${filled ? ` (${filled} filled)` : ''} ◂`))]
+  }
+  return [
+    el('div', { class: 'gutter cols', 'data-gutter': 'sidebar', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the sidebar', tabindex: '0', title: 'Drag to resize; double-click for the default size' }),
+    el('div', { class: 'wf-sidebar' },
+      el('div', { class: 'wf-sidebar-head' }, el('h3', {}, 'Sidebar'),
+        el('button', { type: 'button', class: 'mini', 'data-action': 'sidebar', title: 'Hide the sidebar', 'aria-expanded': 'true' }, '▸')),
+      ...renderBlocks(properties as unknown as AnyBlock[], [], SIDEBAR, ctx)),
+  ]
 }
 
 interface WireContext {
@@ -637,6 +657,9 @@ function onAction(element: HTMLElement, e: Event): void {
   switch (element.dataset.action) {
     case 'tab':
       tab = Number(element.dataset.tab)
+      return render()
+    case 'sidebar':
+      setSidebarHidden(!sidebarHidden())
       return render()
     case 'split':
       splitting = splitting === cardId ? undefined : cardId
