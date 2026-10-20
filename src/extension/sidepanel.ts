@@ -304,12 +304,14 @@ function renderMain(): void {
   targetPicker = new Picker(context, {
     placeholder: 'Search for the page to add to…',
     contentSearch: true,
-    filter: (r) => writableDocuments(r).length > 0,
+    // Every page is listed, as under "Put it under": a page's tabs in the page list can be out of
+    // date (or missing), so they are read again when it is chosen (see checkTabs).
     onChange: (resource) => {
       state.form.targetId = resource?.id
       state.form.targetDocumentId = resource ? writableDocuments(resource)[0]?.id : undefined
       renderTabChoice()
       rebuildPlan() // The page being added to is never linked to itself.
+      if (resource && writableDocuments(resource).length === 0) void checkTabs(resource.id)
     },
   })
   sourcePicker = new Picker(context, {
@@ -381,6 +383,27 @@ function renderMain(): void {
     renderTabChoice()
     rebuildPlan()
   })
+}
+
+/**
+ * Reads a chosen page's tabs from LegendKeeper when the page list shows none it can add to: the
+ * list may be out of date, as for a page made since it was loaded.
+ */
+async function checkTabs(resourceId: string): Promise<void> {
+  if (!state.lk || !state.index) return
+  try {
+    const read = await state.lk.resources.get({ resourceId })
+    const listed = state.index.get(resourceId)
+    const fresh: IndexedResource = { ...ProjectIndex.fromListItem(read as unknown as Parameters<typeof ProjectIndex.fromListItem>[0]), ...(listed ? { rank: listed.rank } : {}) }
+    state.index.upsert(fresh)
+    if (state.form.targetId !== resourceId) return
+    targetPicker.set(fresh, { silent: true })
+    state.form.targetDocumentId = writableDocuments(fresh)[0]?.id
+    renderTabChoice()
+    update()
+  } catch (error) {
+    if (state.form.targetId === resourceId) showToast(`Couldn’t read that page’s tabs: ${String((error as Error).message ?? error)}`, 'error')
+  }
 }
 
 /** Puts back the pages chosen so far (or last time, for a new clip). */
@@ -942,7 +965,8 @@ function importProblems(): string[] {
   if (plan.blocks.length === 0 && !(tree && state.fillPlan)) problems.push('There is nothing to import in this clip.')
   if (form.templateId && state.settings.templates.enabled && !tree) problems.push(state.templateLoading ? 'Reading the template…' : 'The template could not be read. Choose it again.')
   if (form.mode === 'new' && !form.title.trim()) problems.push('Name the new page.')
-  if (form.mode === 'append' && (!targetPicker?.value || !form.targetDocumentId)) problems.push('Choose the page to add to.')
+  if (form.mode === 'append' && !targetPicker?.value) problems.push('Choose the page to add to.')
+  else if (form.mode === 'append' && !form.targetDocumentId) problems.push(`“${targetPicker!.value!.name}” has no text tab to add to (only maps, boards or timelines). Add a page tab to it in LegendKeeper, or choose another page.`)
   const source = chosenSource()
   if (source.problem) problems.push(source.problem)
   return problems
@@ -1246,7 +1270,7 @@ function renderSettings(): void {
     ),
     el('section', {},
       el('h3', {}, 'Linking'),
-      checkbox('Link only exact page names', state.settings.exactNames, 'Keeps the clip’s words: only text written exactly as a page’s name becomes a link', async (v) => {
+      checkbox('Link only exact page names', state.settings.exactNames, 'Only text written exactly as a page’s name or one of its aliases (same capitals) becomes a link; plurals and other spellings stay as written', async (v) => {
         state.settings.exactNames = v
         await saveSettings(state.settings)
         renderSettings()
@@ -1257,7 +1281,7 @@ function renderSettings(): void {
         await saveSettings(state.settings)
       }),
       state.settings.exactNames ? null : el('p', { class: 'muted small' }, 'A page named “King” links “King” but not “king”. Add aliases in LegendKeeper for other spellings and plurals; a lowercase alias still matches at the start of a sentence.'),
-      checkbox('Link only the first mention of each page', state.settings.firstOnly, 'Later mentions of the same page stay plain text', async (v) => {
+      checkbox('Link only the first mention of each page', state.settings.firstOnly, 'Later mentions of the same page in the text stay plain text. Web links to your pages always become page links', async (v) => {
         state.settings.firstOnly = v
         await saveSettings(state.settings)
       }),

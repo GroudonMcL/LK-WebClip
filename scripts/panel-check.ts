@@ -24,17 +24,19 @@ const root = new URL('../', import.meta.url)
 
 // ---------------------------------------------------------------- the stand-in LegendKeeper API
 interface FakeDoc { id: string; name: string; type: string; blocks: Block[]; version: number }
-interface FakeResource { id: string; name: string; parentId: string | null; rank: string; tags: string[]; aliases: string[]; updatedAt: string; properties: AnyBlock[]; docs: FakeDoc[] }
+interface FakeResource { id: string; name: string; parentId: string | null; rank: string; tags: string[]; aliases: string[]; updatedAt: string; properties: AnyBlock[]; docs: FakeDoc[]; listedWithoutDocs?: boolean }
 const resources = new Map<string, FakeResource>()
 const writes: string[] = []
 let nextId = 1
 const add = (r: Omit<FakeResource, 'rank' | 'aliases' | 'updatedAt'> & Partial<FakeResource>) => resources.set(r.id, { rank: String(resources.size), aliases: [], updatedAt: '2026-10-01T00:00:00.000Z', ...r })
 add({ id: 'sources', name: 'Sources', parentId: null, tags: [], properties: [], docs: [{ id: 'sources-main', name: 'Main', type: 'page', blocks: [], version: 1 }] })
+// A page whose entry in the page list shows no tabs, though reading the page finds its Main tab.
+add({ id: 'tarrasque', name: 'Tarrasque', parentId: null, tags: [], properties: [], listedWithoutDocs: true, docs: [{ id: 'tarrasque-main', name: 'Main', type: 'page', blocks: [{ kind: 'paragraph', content: [{ text: 'A legendary monster.' }] }] as Block[], version: 1 }] })
 const template = JSON.parse(await readFile(new URL('test/fixtures/templates/Statblock_Template.json', root), 'utf8'))
 add({ id: template.id, name: template.name, parentId: 'templates', tags: template.tags ?? [], properties: template.properties, docs: template.docs.map((d: FakeDoc, i: number) => ({ ...d, id: d.id ?? `tpl-doc${i}`, version: 1 })) })
 const project = { id: 'p1', name: 'Fake Project' }
-const listItem = (r: FakeResource) => ({ id: r.id, name: r.name, parentId: r.parentId, rank: r.rank, tags: r.tags, aliases: r.aliases, isHidden: false, updatedAt: r.updatedAt, documents: r.docs.map((d) => ({ id: d.id, name: d.name, type: d.type })) })
-const full = (r: FakeResource) => ({ ...listItem(r), properties: r.properties })
+const listItem = (r: FakeResource) => ({ id: r.id, name: r.name, parentId: r.parentId, rank: r.rank, tags: r.tags, aliases: r.aliases, isHidden: false, updatedAt: r.updatedAt, documents: r.listedWithoutDocs ? [] : r.docs.map((d) => ({ id: d.id, name: d.name, type: d.type })) })
+const full = (r: FakeResource) => ({ ...listItem(r), documents: r.docs.map((d) => ({ id: d.id, name: d.name, type: d.type, rank: d.id, isHidden: false })), properties: r.properties })
 
 async function api(route: Route): Promise<void> {
   const request = route.request()
@@ -234,6 +236,19 @@ try {
   check(plain && !writes.includes('createFromTemplate Goblin (plain)') && blockText(plain.docs[0]!.blocks[0] as AnyBlock).startsWith('From'), 'a plain page is created as before, with the credit and the clip')
   const formAfter = await panel.evaluate(async () => JSON.stringify((await chrome.storage.session.get('panel:form'))['panel:form'] ?? null))
   check(formAfter === formBefore, 'and nothing new is stored for the mapper')
+
+  // Add to a page: every page is offered, and a page the list shows without tabs is read again.
+  await worker.evaluate(async (tab) => (globalThis as unknown as { __lkTest: { captureFromMenu: (info: object, id: number) => Promise<void> } }).__lkTest.captureFromMenu({ selectionText: 'Goblin', frameId: 0 }, tab!), tabId)
+  await panel.getByText('Add to a page', { exact: true }).click()
+  await panel.getByPlaceholder('Search for the page to add to…').fill('Tarrasque')
+  const hit = panel.locator('.picker-results li').filter({ hasText: 'Tarrasque' }).first()
+  await hit.waitFor({ timeout: 5000 }).catch(() => {})
+  check(await hit.isVisible(), 'Add to a page lists a page whose tabs the page list doesn’t show (Tarrasque)')
+  await hit.click()
+  await panel.getByRole('button', { name: 'Add to page' }).click()
+  await panel.getByText('Added to the page', { exact: true }).waitFor({ timeout: 30_000 })
+  const tarrasque = resources.get('tarrasque')!.docs[0]!.blocks as AnyBlock[]
+  check(blockText(tarrasque[0]!) === 'A legendary monster.' && tarrasque.length > 2 && textOf(tarrasque as Block[]).includes('Goblin'), 'the clip is added to its Main tab, after what was there')
   check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`)
 } catch (error) {
   // Pictures of every tab, to see where it stopped.

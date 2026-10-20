@@ -140,12 +140,11 @@ describe('linkClip: hyperlinks', () => {
     assert.deepEqual(result.terms.map((t) => [t.text, t.status]), [['King', 'ambiguous']])
   })
 
-  it('with "first mention only", repeated links to the same page keep their web address', () => {
+  it('turns every link to a page into a mention, even with "first mention only" (which limits plain text)', () => {
     const result = link('<p><a href="/a">Dragon</a> then <a href="/b">Dragon</a> then Dragon.</p>')
-    assert.equal(show(result), '[[dragon]] then Dragon then Dragon.')
+    assert.equal(show(result), '[[dragon]] then [[dragon]] then Dragon.')
     const runs = result.blocks[0]?.kind === 'paragraph' ? result.blocks[0].content : []
-    assert.ok(runs.some((r) => 'link' in r && r.link === 'https://example.com/b'))
-    assert.equal(show(link('<p><a href="/a">Dragon</a> then <a href="/b">Dragon</a>.</p>', { firstOnly: false })), '[[dragon]] then [[dragon]].')
+    assert.ok(!runs.some((r) => 'link' in r && r.link), 'no web link to a page is kept')
   })
 
   it('reads link text loosely: case, plural and possessive', () => {
@@ -167,20 +166,36 @@ describe('linkClip: hyperlinks', () => {
 describe('linkClip: exact names only (the default)', () => {
   const exact = (html: string, options: Partial<LinkOptions> = {}) => linkClip(blocks(html), index, { ...DEFAULT_LINK_OPTIONS, ...options })
 
-  it('links only text written as the page’s name, so the clip’s words never change', () => {
+  it('links only text written as a page’s name or alias, with the same capitals', () => {
     assert.equal(
-      show(exact('<p>Make an Attack Roll, or attack rolls, or Attack Rolls, near Greyhawk and the Free City of Greyhawk.</p>')),
-      'Make an Attack Roll, or attack rolls, or [[ar]], near Greyhawk and the [[city]].',
+      show(exact('<p>Make attack rolls, or Attack Rolls, near the Free City of Greyhawk.</p>')),
+      'Make attack rolls, or [[ar]], near the [[city]].',
     )
+    assert.equal(show(exact('<p>Greyhawk is old.</p>')), '[[gh|Greyhawk]] is old.')
     assert.equal(show(exact('<p>A dragon and a Dragon’s hoard.</p>')), 'A dragon and a [[dragon]]’s hoard.')
   })
 
-  it('keeps a web link whose text is not a page’s exact name', () => {
-    const result = exact('<p><a href="/ar">attack roll</a> and <a href="/rd">Red Dragon</a></p>')
-    assert.equal(show(result), 'attack roll and [[rd]]')
+  it('links an alias such as "Paralyzed" to its page "Paralysed", in text and in web links', () => {
+    const conditions = new ProjectIndex([resource('par', 'Paralysed', ['Paralyzed']), resource('fr', 'Frightened')])
+    const run = (html: string) => show(linkClip(blocks(html), conditions, DEFAULT_LINK_OPTIONS))
+    assert.equal(run('<p>Immunities Fire; Frightened, Paralyzed</p>'), 'Immunities Fire; [[fr]], [[par|Paralyzed]]')
+    assert.equal(run('<p><a href="/c#Paralyzed">Paralyzed</a> and <a href="/c#Paralyzed">Paralyzed</a></p>'), '[[par|Paralyzed]] and [[par|Paralyzed]]')
+  })
+
+  it('keeps a web link whose text is not a page’s exact name or alias', () => {
+    const result = exact('<p><a href="/ar">attack rolls</a> and <a href="/rd">Red Dragon</a></p>')
+    assert.equal(show(result), 'attack rolls and [[rd]]')
     const runs = result.blocks[0]?.kind === 'paragraph' ? result.blocks[0].content : []
     assert.ok(runs.some((r) => 'link' in r && r.link === 'https://example.com/ar'))
     assert.deepEqual(hyperlinkCandidates('red dragons', index, true), [])
+    assert.deepEqual(hyperlinkCandidates('attack roll', index, true).map((r) => r.id), ['ar'])
+  })
+
+  it('leaves bold field labels unlinked, so "**Initiative** +18" stays a label', () => {
+    const rules = new ProjectIndex([resource('init', 'Initiative'), resource('sk', 'Skills'), resource('per', 'Perception')])
+    const run = (html: string) => show(linkClip(blocks(html), rules, DEFAULT_LINK_OPTIONS))
+    assert.equal(run('<p><strong>AC</strong> 25 <strong>Initiative</strong> +18 (28)</p><p><strong>Skills</strong> Perception +9</p>'), 'AC 25 Initiative +18 (28) / Skills [[per]] +9')
+    assert.equal(run('<p>Roll Initiative, then <b>Skills</b>.</p>'), 'Roll [[init]], then [[sk]].', 'bold in running text still links')
   })
 })
 
