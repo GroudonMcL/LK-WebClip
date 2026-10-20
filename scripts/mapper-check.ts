@@ -20,6 +20,8 @@ import { buildMapBase, initialMapping, type Mapping } from '../src/fill/mapping.
 import { planFill } from '../src/fill/plan.js'
 import type { TemplateTree } from '../src/fill/template.js'
 import type { MapperSession } from '../src/extension/mapperState.js'
+import { inRankOrder } from '../src/lk/pages.js'
+import type { Block } from '@legendkeeper/sdk/blocks'
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
 const shots = process.argv[2]
@@ -28,7 +30,7 @@ const parser = new DOMParser() as unknown as { parseFromString(html: string, typ
 
 async function sessionFor(fixture: string, templateName: string, title: string, key: string, site = 'dndbeyond.com'): Promise<MapperSession> {
   const t = JSON.parse(await readFile(new URL(`test/fixtures/templates/${templateName.replace(/ /g, '_')}.json`, root), 'utf8'))
-  const tree: TemplateTree = { docs: t.docs.filter((d: { type: string }) => d.type === 'page'), properties: t.properties }
+  const tree: TemplateTree = { docs: t.docs.filter((d: { type: string }) => d.type === 'page').map((d: { name: string; blocks: Block[] }) => ({ ...d, blocks: inRankOrder(d.blocks) })), properties: t.properties }
   const clip = htmlStringToBlocks(await readFile(new URL(`test/fixtures/${fixture}`, root), 'utf8'), parser, { baseUrl: `https://${site}/` }).blocks
   const plan = planFill({ tree, templateId: t.id, templateName, clip, title, site, synonyms: new Synonyms(DEFAULT_SYNONYMS), rules: [], mode: 'labels', overrides: {} })
   const base = buildMapBase(plan, clip, { key, synonyms: DEFAULT_SYNONYMS, title })

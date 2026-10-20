@@ -17,6 +17,7 @@ import { isWritable, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.j
 import { OnDeviceEngine } from '../src/fill/engines.js'
 import { withNewDefaults, withNewDerived } from '../src/extension/state.js'
 import { challengeTag, creatureLineTags, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
+import { inRankOrder } from '../src/lk/pages.js'
 import { blockText, buildSlots, fillTree, forCopy, namesPage, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
@@ -24,7 +25,9 @@ const synonyms = new Synonyms(DEFAULT_SYNONYMS)
 
 function template(name: string): { id: string; tree: TemplateTree } {
   const t = JSON.parse(readFileSync(new URL(`./fixtures/templates/${name}.json`, import.meta.url), 'utf8'))
-  return { id: t.id, tree: { docs: t.docs.filter((d: { type: string }) => d.type === 'page'), properties: t.properties } }
+  // As readTemplate reads it: rows in rank order.
+  const docs = t.docs.filter((d: { type: string }) => d.type === 'page').map((d: { name: string; blocks: Block[] }) => ({ ...d, blocks: inRankOrder(d.blocks) }))
+  return { id: t.id, tree: { docs, properties: t.properties } }
 }
 const blocks = (html: string): Block[] => htmlStringToBlocks(html, parser, { baseUrl: 'https://example.com/' }).blocks
 const goblin = blocks(readFileSync(new URL('./fixtures/dndbeyond-goblin.html', import.meta.url), 'utf8'))
@@ -85,6 +88,16 @@ describe('slots', () => {
   it('treats "[Spell] Name" as the page name, and leaves captions such as "Core [Class] Traits" alone', () => {
     assert.ok(buildSlots(template('Spell_Template').tree).some((s) => s.kind === 'name'))
     assert.ok(!buildSlots(template('Class_Template').tree).some((s) => /Core/.test(s.label)))
+  })
+
+  it('reads infobox rows in rank order, so a text box ranked first stays above Armour Class', () => {
+    const raw = JSON.parse(readFileSync(new URL('./fixtures/templates/Statblock_Template.json', import.meta.url), 'utf8'))
+    assert.equal((raw.docs[0].blocks[0].rows as AnyBlock[]).at(-1)!.kind, 'textField', 'the API lists the text box last')
+    const slots = buildSlots(statblock.tree)
+    const first = slots.findIndex((s) => s.label === 'Size, Creature Type, Alignment')
+    assert.ok(first >= 0 && first < slots.findIndex((s) => s.label === 'Armour Class'))
+    const filled = fillTree(statblock.tree, slots, new Map())
+    assert.equal(((filled.docs[0]![0] as AnyBlock).rows as AnyBlock[])[0]!.kind, 'textField')
   })
 
   it('gives a page made from the template the same slot ids (they come from labels, not block ids)', () => {
@@ -579,7 +592,7 @@ describe('Labels then AI writes', () => {
   it('lets the AI write short fields only, and gives it the notes', () => {
     const p = run()
     const slots = slotsForAi(p, 'labels-ai-write', {})
-    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Resistances', 'Immunities', 'Size, Creature Type, Alignment'])
+    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Size, Creature Type, Alignment', 'Resistances', 'Immunities'])
     assert.ok(!slots.some((s) => s.label === 'Initiative'), 'a worked-out field isn’t asked about')
     const job = buildAiJob({ slots, clip: goblin, blockIndexes: p.unusedBlockIndexes, title: 'Goblin', labels: p.blockLabels, write: { notes: DND5E_STATBLOCK.text } })!
     assert.equal(job.system, WRITE_SYSTEM_PROMPT)
