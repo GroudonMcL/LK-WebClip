@@ -8,22 +8,43 @@ body.mapper { min-height: 100vh; }
 .m-status > * { margin: 8px 0 0; }
 .m-status .done-line { padding: 6px 10px; border-radius: 7px; background: var(--panel); border: 1px solid var(--ok); }
 
+/* The dividers between panes are grid items 12px wide (or tall), so they stand in for the gap.
+   mapperLayout.ts sets --clip-w, --preview-w and --tray-h when a divider is dragged. */
 .mgrid {
-  display: grid; gap: 12px; padding: 12px 16px 16px;
-  grid-template-columns: minmax(250px, .9fr) minmax(440px, 1.9fr) minmax(280px, .9fr);
-  grid-template-areas: "clip wire preview" "tray tray preview";
-  grid-template-rows: minmax(0, 1fr) auto;
+  display: grid; gap: 0; padding: 12px 16px 16px;
+  grid-template-columns: var(--clip-w, minmax(250px, .9fr)) 12px minmax(320px, 1.9fr) 12px var(--preview-w, minmax(280px, .9fr));
+  grid-template-areas: "clip gclip wire gpreview preview" "gtray gtray gtray gpreview preview" "tray tray tray gpreview preview";
+  grid-template-rows: minmax(0, 1fr) 12px var(--tray-h, auto);
   height: calc(100vh - 52px);
 }
 @media (max-width: 1150px) {
-  .mgrid { grid-template-columns: minmax(240px, 1fr) minmax(340px, 1.5fr); grid-template-areas: "clip wire" "tray tray" "preview preview"; grid-template-rows: 70vh auto auto; height: auto; }
+  .mgrid { gap: 12px; grid-template-columns: minmax(240px, 1fr) minmax(340px, 1.5fr); grid-template-areas: "clip wire" "tray tray" "preview preview"; grid-template-rows: 70vh auto auto; height: auto; }
+  .mgrid > .gutter { display: none; }
 }
 #m-clip { grid-area: clip; }
 #m-wire { grid-area: wire; }
 #m-preview { grid-area: preview; }
 #m-tray { grid-area: tray; }
+[data-gutter="clip"] { grid-area: gclip; }
+[data-gutter="preview"] { grid-area: gpreview; }
+[data-gutter="tray"] { grid-area: gtray; }
 .mcol, .mtray { min-width: 0; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .mtray { max-height: 30vh; }
+.mgrid.tray-sized .mtray { max-height: none; }
+
+/* Dividers: a line that shows on hover, focus and while dragging. */
+.gutter { position: relative; touch-action: none; user-select: none; }
+.gutter.cols { cursor: col-resize; }
+.gutter.rows { cursor: row-resize; }
+.gutter::after { content: ""; position: absolute; border-radius: 2px; background: transparent; transition: background .1s; }
+.gutter.cols::after { top: 25%; bottom: 25%; left: 4px; width: 4px; }
+.gutter.rows::after { left: 25%; right: 25%; top: 4px; height: 4px; }
+.gutter:hover::after, .gutter:focus-visible::after { background: var(--line); }
+.gutter:focus-visible { outline: none; }
+.gutter:focus-visible::after, body.resizing .gutter:active::after { background: var(--accent); }
+body.resizing { user-select: none; }
+body.resizing-cols, body.resizing-cols * { cursor: col-resize !important; }
+body.resizing-rows, body.resizing-rows * { cursor: row-resize !important; }
 .mcol h2, .mtray h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
 .hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
 .empty-page { padding: 40px; max-width: 560px; }
@@ -60,12 +81,21 @@ button.more { border: 0; background: none; padding: 0; font-size: 11px; color: v
 .wf-tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--line); }
 .wf-tabs button { border: 1px solid var(--line); border-bottom: 0; border-radius: 7px 7px 0 0; padding: 4px 10px; background: var(--bg); }
 .wf-tabs button.on { background: var(--panel); font-weight: 700; color: var(--accent); }
-.wf-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 28%); gap: 10px; align-items: start; }
+.wf-layout { display: grid; grid-template-columns: minmax(0, 1fr) 10px var(--sidebar-w, minmax(160px, 28%)); align-items: stretch; }
 .wf-layout > *, .wf-columns > * { min-width: 0; }
 .wf-layout.no-sidebar { grid-template-columns: minmax(0, 1fr); }
+.wf-layout.sidebar-hidden { grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; }
+.wf-page { align-self: start; }
 .wf-page::after { content: ""; display: block; clear: both; }
-.wf-sidebar { padding: 8px; border-left: 2px solid var(--line); }
-.wf-sidebar > h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; margin: 0 0 6px; }
+.wf-sidebar { padding: 8px; border-left: 2px solid var(--line); align-self: start; }
+.wf-sidebar-head { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; }
+.wf-sidebar-head > h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; margin: 0; }
+.wf-sidebar-head button.mini { margin-left: auto; }
+.wf-sidebar button.mini { border: 0; background: none; padding: 0 4px; font-size: 13px; color: var(--muted); cursor: pointer; border-radius: 4px; }
+.wf-sidebar button.mini:hover { background: var(--line); color: var(--text); }
+.wf-sidebar.collapsed { padding: 4px 2px; }
+.wf-sidebar.collapsed button.show { writing-mode: vertical-rl; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); padding: 8px 3px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.wf-sidebar.collapsed button.show:hover { color: var(--text); border-color: var(--accent); }
 .wf-infobox { float: right; width: 52%; margin: 0 0 8px 10px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .wf-columns .wf-infobox { float: none; width: auto; margin: 0 0 8px; }
 .wf-infobox > .wf-caption { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
@@ -76,7 +106,7 @@ button.more { border: 0; background: none; padding: 0; font-size: 11px; color: v
 .wf-static { color: var(--muted); font-size: 12px; margin: 0 0 6px; overflow-wrap: anywhere; }
 .wf-static.heading { font-weight: 700; font-size: 13px; color: var(--text); opacity: .7; }
 .wf-static hr { border: 0; border-top: 2px solid var(--line); }
-@media (max-width: 700px) { .wf-layout { grid-template-columns: 1fr; } .wf-infobox { float: none; width: auto; margin-left: 0; } }
+@media (max-width: 700px) { .wf-layout, .wf-layout.sidebar-hidden { grid-template-columns: 1fr; } .wf-layout > .gutter { display: none; } .wf-infobox { float: none; width: auto; margin-left: 0; } }
 
 /* Drop zones (slots) */
 .zone { display: flow-root; border: 1px solid var(--line); border-radius: 8px; padding: 5px 6px; margin: 0 0 6px; background: var(--panel); transition: opacity .1s; }

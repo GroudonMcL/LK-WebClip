@@ -5,7 +5,7 @@ import { DOMParser } from 'linkedom'
 import type { Block } from '@legendkeeper/sdk/blocks'
 import { htmlStringToBlocks, mapBlocks } from '../src/clip/htmlToBlocks.js'
 import { AiAnswerError, buildAiJob, parseAiAnswer, slotsForAi } from '../src/fill/ai.js'
-import { extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
+import { abilityValue, extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
 import { appendTree, appendedTemplate, applyComposition, compose, tidyRules } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngine } from '../src/fill/engines.js'
 import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, namedMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
@@ -17,6 +17,7 @@ import { isWritable, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from '../src/fill/ai.j
 import { OnDeviceEngine } from '../src/fill/engines.js'
 import { withNewDefaults, withNewDerived } from '../src/extension/state.js'
 import { challengeTag, creatureLineTags, parseTags, statblockTags, withProjectSpelling } from '../src/fill/tags.js'
+import { inRankOrder } from '../src/lk/pages.js'
 import { blockText, buildSlots, fillTree, forCopy, namesPage, type AnyBlock, type TemplateTree } from '../src/fill/template.js'
 
 const parser = new DOMParser() as unknown as { parseFromString(html: string, type: 'text/html'): Document }
@@ -24,7 +25,9 @@ const synonyms = new Synonyms(DEFAULT_SYNONYMS)
 
 function template(name: string): { id: string; tree: TemplateTree } {
   const t = JSON.parse(readFileSync(new URL(`./fixtures/templates/${name}.json`, import.meta.url), 'utf8'))
-  return { id: t.id, tree: { docs: t.docs.filter((d: { type: string }) => d.type === 'page'), properties: t.properties } }
+  // As readTemplate reads it: rows in rank order.
+  const docs = t.docs.filter((d: { type: string }) => d.type === 'page').map((d: { name: string; blocks: Block[] }) => ({ ...d, blocks: inRankOrder(d.blocks) }))
+  return { id: t.id, tree: { docs, properties: t.properties } }
 }
 const blocks = (html: string): Block[] => htmlStringToBlocks(html, parser, { baseUrl: 'https://example.com/' }).blocks
 const goblin = blocks(readFileSync(new URL('./fixtures/dndbeyond-goblin.html', import.meta.url), 'utf8'))
@@ -87,6 +90,16 @@ describe('slots', () => {
     assert.ok(!buildSlots(template('Class_Template').tree).some((s) => /Core/.test(s.label)))
   })
 
+  it('reads infobox rows in rank order, so a text box ranked first stays above Armour Class', () => {
+    const raw = JSON.parse(readFileSync(new URL('./fixtures/templates/Statblock_Template.json', import.meta.url), 'utf8'))
+    assert.equal((raw.docs[0].blocks[0].rows as AnyBlock[]).at(-1)!.kind, 'textField', 'the API lists the text box last')
+    const slots = buildSlots(statblock.tree)
+    const first = slots.findIndex((s) => s.label === 'Size, Creature Type, Alignment')
+    assert.ok(first >= 0 && first < slots.findIndex((s) => s.label === 'Armour Class'))
+    const filled = fillTree(statblock.tree, slots, new Map())
+    assert.equal(((filled.docs[0]![0] as AnyBlock).rows as AnyBlock[])[0]!.kind, 'textField')
+  })
+
   it('gives a page made from the template the same slot ids (they come from labels, not block ids)', () => {
     const copy: TemplateTree = JSON.parse(JSON.stringify(statblock.tree))
     let n = 0
@@ -144,6 +157,36 @@ describe('planFill', () => {
     // The name line is the page title, so it isn't repeated in the unused content.
     assert.equal(text(p.leftovers), 'Small Humanoid (Goblinoid), Neutral Evil')
     assert.equal(slotNamed(p, 'Proficiency Bonus').text, '+2')
+  })
+
+  it('uses the Initiative a 2024 stat block states, rather than working it out from Dexterity', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-tarrasque.html', import.meta.url), 'utf8'))
+    for (const mode of ['labels', 'labels-ai', 'ai'] as const) {
+      const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Tarrasque', site: 'dndbeyond.com', synonyms, rules: [], mode, overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+      assert.equal(slotNamed(p, 'Initiative').text, '+18 (28)', mode)
+      assert.notEqual(slotNamed(p, 'Initiative').origin, 'derived', mode)
+      if (mode !== 'ai') assert.equal(slotNamed(p, 'Dexterity').text, '11 (+0, Save +9)', mode)
+    }
+    // Only the start stated: still completed from Dexterity.
+    const start = blocks('<p><strong>Initiative</strong> +3</p><p><strong>DEX</strong> 16 (+3)</p>')
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip: start, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Initiative').text, '+3 (13)')
+    // A table of one ability under MOD and SAVE is a row, not columns.
+    const one = blocks('<table><tr><th></th><th></th><th>Mod</th><th>Save</th></tr><tr><th>Dex</th><td>11</td><td>+0</td><td>+9</td></tr></table>')
+    assert.equal(slotNamed(planFill({ tree: statblock.tree, templateId: statblock.id, clip: one, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {} }), 'Dexterity').text, '11 (+0, Save +9)')
+  })
+
+  it('reads a 2024 ability table (score, MOD, SAVE), adding the save only when it differs', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-abilities.html', import.meta.url), 'utf8'))
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Ancient Red Dragon', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Strength').text, '30 (+10)')
+    assert.equal(slotNamed(p, 'Dexterity').text, '10 (+0, Save +7)')
+    assert.equal(slotNamed(p, 'Wisdom').text, '15 (+2, Save +9)')
+    assert.equal(slotNamed(p, 'Charisma').text, '27 (−8)')
+    assert.ok(!p.leftovers.some((b) => b.kind === 'table'), 'both tables, header rows included, are used up')
+    assert.equal(abilityValue('Str', ['30', '+10']), '30 (+10)', 'a table without saves')
+    assert.equal(abilityValue('Level', ['1', '+2', '+3']), undefined)
+    assert.equal(deriveValue('10 (+0, Save +7)', 'modifier'), '+0', 'the modifier, not the save')
   })
 
   it('never guesses between two equally good values', () => {
@@ -526,6 +569,21 @@ describe('worked-out fields', () => {
     assert.equal(slotNamed(p, 'Initiative').text, '+2 (12)')
   })
 
+  it('in AI mode, takes the Initiative the clip states over an unticked AI guess and over working it out', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-tarrasque.html', import.meta.url), 'utf8'))
+    const run = (ai?: Map<string, AiSuggestion>) => planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Tarrasque', site: 'dndbeyond.com', synonyms, rules: [], mode: 'ai', overrides: {}, derived: parseDerived(DEFAULT_DERIVED), ...(ai ? { ai } : {}) })
+    const first = run()
+    const id = (label: string) => slotNamed(first, label).slot.id
+    const dex = clip.findIndex((b) => b.kind === 'table')
+    const p = run(new Map<string, AiSuggestion>([
+      [id('Dexterity'), { blocks: [dex], value: '' }],
+      [id('Initiative'), { blocks: [], value: '+0 (10)' }],
+    ]))
+    assert.equal(slotNamed(p, 'Initiative').text, '+18 (28)')
+    assert.equal(slotNamed(p, 'Initiative').status, 'filled')
+    assert.equal(slotNamed(p, 'Initiative').warning, undefined)
+  })
+
   it('never replaces a value the clip states', () => {
     const clip = blocks('<p><strong>DEX</strong> 16 (+3)</p><p><strong>Initiative</strong> +7 (17)</p>')
     const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'X', site: '', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
@@ -579,7 +637,7 @@ describe('Labels then AI writes', () => {
   it('lets the AI write short fields only, and gives it the notes', () => {
     const p = run()
     const slots = slotsForAi(p, 'labels-ai-write', {})
-    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Resistances', 'Immunities', 'Size, Creature Type, Alignment'])
+    assert.deepEqual(slots.filter(isWritable).map((s) => s.label), ['Size, Creature Type, Alignment', 'Resistances', 'Immunities'])
     assert.ok(!slots.some((s) => s.label === 'Initiative'), 'a worked-out field isn’t asked about')
     const job = buildAiJob({ slots, clip: goblin, blockIndexes: p.unusedBlockIndexes, title: 'Goblin', labels: p.blockLabels, write: { notes: DND5E_STATBLOCK.text } })!
     assert.equal(job.system, WRITE_SYSTEM_PROMPT)

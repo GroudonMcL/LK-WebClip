@@ -6,7 +6,7 @@
  *   Initiative = {Dexterity modifier} ({10 + Dexterity modifier})
  *
  * Text in braces is taken from another field; everything else is written as it is. Inside braces:
- *   - "Field modifier": the signed number in "16 (+3)", or worked out from a lone ability score (16 → +3);
+ *   - "Field modifier": the signed number in "16 (+3)" or "11 (+0, Save +8)", or worked out from a lone ability score (16 → +3);
  *   - "Field number": the first number;
  *   - "Field": the whole value;
  *   - "10 + Field modifier" (or "-"): a sum, written without a sign (13).
@@ -97,7 +97,7 @@ export function deriveValue(text: string, part: DerivedPart): string | undefined
   if (!value) return undefined
   if (part === 'value') return value
   if (part === 'number') return /[+\-−–]?\d+(?:[.,]\d+)?/.exec(value)?.[0]
-  const signed = /\(\s*([+\-−–])\s*(\d+)\s*\)/.exec(value) ?? /(?:^|\s)([+\-−–])(\d+)\b/.exec(value)
+  const signed = /\(\s*([+\-−–])\s*(\d+)\s*[),]/.exec(value) ?? /(?:^|\s)([+\-−–])(\d+)\b/.exec(value)
   if (signed) return `${signed[1] === '+' ? '+' : '-'}${signed[2]}`
   const score = /^(\d{1,2})$/.exec(value)
   if (!score) return undefined

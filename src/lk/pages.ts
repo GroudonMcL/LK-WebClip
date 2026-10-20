@@ -8,6 +8,37 @@ export interface DocumentRef {
   documentId: string
 }
 
+/**
+ * Reads a page tab's blocks with infobox and key-value rows in the order LegendKeeper shows them.
+ * The API returns rows in the order they were stored, which is not always their rank order (a row
+ * added to an infobox and dragged to the top keeps its place at the end), and a write puts rows in
+ * the order it is given. So without this, writing a page back would move such rows to the bottom.
+ */
+export async function readBlocks(lk: LegendKeeper, ref: DocumentRef): Promise<DocumentBlocks> {
+  const read = await lk.documents.getBlocks(ref)
+  return { ...read, blocks: inRankOrder(read.blocks) }
+}
+
+/** Sorts infobox and key-value rows by rank, at any depth. Blocks without ranks keep their order. */
+export function inRankOrder<T>(blocks: T[]): T[] {
+  const byRank = (a: { rank?: unknown }, b: { rank?: unknown }) => {
+    const x = typeof a.rank === 'string' ? a.rank : undefined
+    const y = typeof b.rank === 'string' ? b.rank : undefined
+    if (x === undefined || y === undefined || x === y) return 0
+    return x < y ? -1 : 1
+  }
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit)
+    if (!value || typeof value !== 'object') return value
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value)) out[key] = visit(child)
+    const kind = (value as { kind?: unknown }).kind
+    if ((kind === 'infobox' || kind === 'keyValue') && Array.isArray(out.rows)) out.rows = [...(out.rows as { rank?: unknown }[])].sort(byRank)
+    return out
+  }
+  return blocks.map(visit) as T[]
+}
+
 /** The content of a new clip page: the Source heading (unless the credit is off), then the clipped blocks. */
 export function newPageClip(sourceId: string | undefined, content: Block[]): Block[] {
   return [...(sourceId ? [sourceHeading(sourceId)] : []), ...content]
@@ -91,11 +122,11 @@ const REPLACE_BODY_LIMIT = 900_000
 export async function appendToDocument(lk: LegendKeeper, ref: DocumentRef, blocks: Block[], options: AppendOptions = {}): Promise<AppendResult> {
   const maxAttempts = options.maxAttempts ?? 3
   for (let attempt = 1; ; attempt++) {
-    let read = await lk.documents.getBlocks(ref)
+    let read = await readBlocks(lk, ref)
     if (read.blocks.some((block) => !block.id)) {
       // Pages written before block ids existed. Unsupported blocks can only be echoed by id, so give them ids first.
       await lk.documents.assignBlockIds(ref)
-      read = await lk.documents.getBlocks(ref)
+      read = await readBlocks(lk, ref)
     }
     await options.beforeWrite?.(attempt, read)
 

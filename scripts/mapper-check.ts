@@ -20,6 +20,8 @@ import { buildMapBase, initialMapping, type Mapping } from '../src/fill/mapping.
 import { planFill } from '../src/fill/plan.js'
 import type { TemplateTree } from '../src/fill/template.js'
 import type { MapperSession } from '../src/extension/mapperState.js'
+import { inRankOrder } from '../src/lk/pages.js'
+import type { Block } from '@legendkeeper/sdk/blocks'
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
 const shots = process.argv[2]
@@ -28,7 +30,7 @@ const parser = new DOMParser() as unknown as { parseFromString(html: string, typ
 
 async function sessionFor(fixture: string, templateName: string, title: string, key: string, site = 'dndbeyond.com'): Promise<MapperSession> {
   const t = JSON.parse(await readFile(new URL(`test/fixtures/templates/${templateName.replace(/ /g, '_')}.json`, root), 'utf8'))
-  const tree: TemplateTree = { docs: t.docs.filter((d: { type: string }) => d.type === 'page'), properties: t.properties }
+  const tree: TemplateTree = { docs: t.docs.filter((d: { type: string }) => d.type === 'page').map((d: { name: string; blocks: Block[] }) => ({ ...d, blocks: inRankOrder(d.blocks) })), properties: t.properties }
   const clip = htmlStringToBlocks(await readFile(new URL(`test/fixtures/${fixture}`, root), 'utf8'), parser, { baseUrl: `https://${site}/` }).blocks
   const plan = planFill({ tree, templateId: t.id, templateName, clip, title, site, synonyms: new Synonyms(DEFAULT_SYNONYMS), rules: [], mode: 'labels', overrides: {} })
   const base = buildMapBase(plan, clip, { key, synonyms: DEFAULT_SYNONYMS, title })
@@ -188,6 +190,39 @@ try {
   await clipCard(page, '§ Dogma').dragTo(zone(page, 'Manifesto, Dogma, or Quote'))
   check(await zone(page, 'Manifesto, Dogma, or Quote').getByText('Every dawn is a second chance', { exact: false }).isVisible(), 'wiki: a section dragged in brings its text')
   if (shots) await page.screenshot({ path: join(shots, 'mapper-wiki.png') })
+
+  // Resizing panes and hiding the sidebar.
+  const width = async (selector: string) => (await page.locator(selector).boundingBox())!.width
+  const drag = async (gutter: string, dx: number, dy = 0) => {
+    const box = (await page.locator(`[data-gutter="${gutter}"]`).boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 5 })
+    await page.mouse.up()
+  }
+  const clipBefore = await width('#m-clip')
+  await drag('clip', 120)
+  check(Math.abs(await width('#m-clip') - clipBefore - 120) < 4, 'drag the divider: the clip gets wider')
+  const previewBefore = await width('#m-preview')
+  await drag('preview', 80)
+  check(Math.abs(previewBefore - await width('#m-preview') - 80) < 4, 'drag the divider: the preview gets narrower')
+  const trayBefore = (await page.locator('#m-tray').boundingBox())!.height
+  await drag('tray', 0, -60)
+  check(Math.abs((await page.locator('#m-tray').boundingBox())!.height - trayBefore - 60) < 4, 'drag the divider: the unused tray gets taller')
+  const sidebarBefore = await width('.wf-sidebar')
+  await drag('sidebar', -50)
+  check(Math.abs(await width('.wf-sidebar') - sidebarBefore - 50) < 4, 'drag the divider: the sidebar gets wider')
+  await page.locator('[data-gutter="clip"]').dblclick()
+  check(await page.locator('#m-app').evaluate((grid) => grid.style.getPropertyValue('--clip-w') === ''), 'double-click the divider: the clip goes back to its default size')
+  await page.locator('.wf-sidebar [data-action="sidebar"]').click()
+  check(await page.locator('.wf-sidebar .zone').count() === 0 && await page.locator('.wf-sidebar.collapsed').isVisible(), 'hide the sidebar')
+  const pageWider = await width('.wf-page')
+  await page.reload()
+  await page.locator('#m-title', { hasText: 'Aurelion' }).waitFor()
+  check(await page.locator('.wf-sidebar.collapsed').isVisible() && Math.abs(await width('#m-preview') - (previewBefore - 80)) < 4, 'sizes and the hidden sidebar are remembered')
+  if (shots) await page.screenshot({ path: join(shots, 'mapper-resized.png') })
+  await page.locator('.wf-sidebar.collapsed [data-action="sidebar"]').click()
+  check(await page.locator('.wf-sidebar .zone').count() > 0 && await width('.wf-page') < pageWider, 'show the sidebar again')
 
   // 4. A plain article with no labels.
   const article = await sessionFor('plain-article.html', 'Other Location Template', 'Saltmere', 'article', 'example.org')

@@ -416,6 +416,20 @@ function plan(input: FillInput): FillPlan {
   // clip states is completed when it is only the start of the worked-out one ("+3" → "+3 (13)").
   for (const rule of input.derived ?? []) {
     const targetKey = cleanLabel(rule.target)
+    // The clip's own value comes first: a 2024 stat block states "Initiative +18 (28)", which
+    // working it out from Dexterity (+0) would get wrong. Labels find it already; this is for "AI"
+    // mode, which skips labels, and never asks the AI about a field a rule works out.
+    for (const slot of fillable) {
+      const state = states.get(slot.id)!
+      const doubtful = state.status === 'off' && (state.origin === 'ai-written' || state.origin === 'ai-wrote' || state.warning !== undefined)
+      if (slot.kind !== 'text' || (state.status !== 'empty' && !doubtful) || input.overrides[slot.id]?.choice || input.overrides[slot.id]?.off !== undefined || compareLabels(slot.key, targetKey, input.synonyms) === undefined) continue
+      const stated = extraction.candidates
+        .map((c) => ({ c, match: c.kind === 'pair' && !c.entry && fits(slot, c) && free(c) ? compareLabels(slot.key, c.key, input.synonyms) : undefined }))
+        .filter((e) => e.match === LabelMatch.Exact || e.match === LabelMatch.Synonym)
+      if (stated.length !== 1) continue
+      assign(slot, stated[0]!.c, ORIGIN_OF[stated[0]!.match!])
+      states.set(slot.id, { ...states.get(slot.id)!, warning: undefined, note: undefined })
+    }
     const sources: SlotState[] = []
     const value = applyDerived(rule, (name) => {
       const key = cleanLabel(name)

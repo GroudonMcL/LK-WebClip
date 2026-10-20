@@ -2,6 +2,7 @@ import { VersionMismatchError, type LegendKeeper } from '@legendkeeper/sdk'
 import type { Block, PropertyBlock } from '@legendkeeper/sdk/blocks'
 import { applyComposition, type Composition } from '../fill/compose.js'
 import type { PropertyOp, TemplateTree } from '../fill/template.js'
+import { readBlocks } from './pages.js'
 import { ProjectIndex, TEMPLATES_ROOT, type IndexedResource } from './projectIndex.js'
 
 /**
@@ -60,7 +61,7 @@ export async function readTemplate(lk: LegendKeeper, templateId: string): Promis
       if (doc.type !== 'blank') otherTabs.push(doc.name ?? doc.type)
       continue
     }
-    const read = await lk.documents.getBlocks({ resourceId: templateId, documentId: doc.id })
+    const read = await readBlocks(lk, { resourceId: templateId, documentId: doc.id })
     docs.push({ name: doc.name ?? 'Main', blocks: read.blocks })
   }
   return { id: resource.id, name: resource.name, updatedAt: resource.updatedAt ?? null, tree: { docs, properties: (resource.properties ?? []) as PropertyBlock[] }, otherTabs }
@@ -103,10 +104,10 @@ export async function fillPage(lk: LegendKeeper, resourceId: string, composition
     const reads = []
     for (const doc of pages) {
       const ref = { resourceId, documentId: doc.id }
-      let read = await lk.documents.getBlocks(ref)
+      let read = await readBlocks(lk, ref)
       if (read.blocks.some((b) => !b.id)) {
         await lk.documents.assignBlockIds(ref)
-        read = await lk.documents.getBlocks(ref)
+        read = await readBlocks(lk, ref)
       }
       reads.push({ ref, doc, read })
     }
