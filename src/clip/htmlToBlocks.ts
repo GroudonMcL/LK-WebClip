@@ -1,5 +1,5 @@
 import type { Block, ListItemBlock, Run, TableCellBlock, TableRowBlock } from '@legendkeeper/sdk/blocks'
-import { isLabelElement } from './labelElements.js'
+import { isLabelElement, isStatBlockElement } from './labelElements.js'
 
 /**
  * Converts captured web content into LegendKeeper blocks.
@@ -86,10 +86,14 @@ const INLINE_MARKS: Record<string, Marks> = {
 
 /** Lists made from stray <li> elements, so neighbouring ones merge into one list. */
 const orphanLists = new WeakSet<Block>()
+/** The dividers put after a stat block, which go again when nothing without a heading follows. */
+const statBlockEnds = new WeakSet<Block>()
 
 export function htmlToBlocks(root: Node, options: ConvertOptions = {}): ConvertResult {
   const context: Context = { options: { images: true, ...options }, images: [], warnings: new Set(), inTable: false, pre: false }
   let blocks = convertChildren(root, context, {})
+  // The divider after a stat block is needed only before content with no heading of its own.
+  blocks = blocks.filter((block, i) => !statBlockEnds.has(block) || (i + 1 < blocks.length && blocks[i + 1]!.kind !== 'heading' && blocks[i + 1]!.kind !== 'rule'))
   const top = options.topHeadingLevel ?? 2
   if (top > 0) blocks = shiftHeadings(blocks, top)
   if (blocks.length === 0) {
@@ -182,6 +186,12 @@ function convertNode(node: Node, out: BlockBuilder, context: Context, marks: Mar
       out.flush()
       for (const child of Array.from(el.childNodes)) convertNode(child, out, context, marks)
       out.flush()
+      // What follows a stat block (the creature's description) is not part of its last section.
+      if (isStatBlockElement(el)) {
+        const rule: Block = { kind: 'rule' }
+        statBlockEnds.add(rule)
+        out.addBlock(rule)
+      }
       return
     case 'dt': case 'summary': case 'caption':
       out.flush()

@@ -274,6 +274,14 @@ One deliberate difference from My Bard: “Becoming a [Class]” becomes “Beco
 - **Links inside values** are kept, so a stat block’s “Darkvision” or “Stealth” still link to your glossary pages inside the infobox.
 - **Unchanged from the design:** the panel remembers the last template per Source (or per website before it has a Source), and the Template choice starts at “None (clip as usual)”.
 
+## The description under a stat block (0.7.4)
+
+D&D Beyond’s 2024 monster pages put the creature’s lore (paragraphs, tables such as “Tarrasque Evidence”, images) under the stat block, with no heading of its own. The clip has no sign of where the stat block ends, so the lore went into the last section, usually Legendary Actions, and Description stayed empty.
+
+- **The converter marks the end of a stat block** (an element with a class such as `mon-stat-block-2024`, `mon-stat-block`, `stat-block` or `statblock`, not its parts) with a divider. The divider is kept only when content without a heading follows it, so a clip of just the stat block, or one where the site’s own “Description” heading follows, is unchanged. For the whole-article clip, the divider is put in before Readability, which drops class names.
+- **A label line’s section stops at a divider,** so Legendary Actions ends at its last entry. A section’s own unlabelled paragraphs (the Tarrasque’s Swallow rules) still belong to it, since they come before the divider.
+- **The content after the divider is a “Description” section** that runs to the end of the clip and fills the template’s Description (or a field with a synonym: Overview, Summary). Parts of it that other fields take by label are taken out of it, as for any section.
+
 ## Also changed
 
 - **Wikipedia “[edit]” links** are removed before Readability runs, so they no longer appear as text after each heading.

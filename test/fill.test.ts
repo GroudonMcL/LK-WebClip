@@ -261,6 +261,52 @@ describe('planFill', () => {
   })
 })
 
+// D&D Beyond's 2024 monster pages put the creature's lore under the stat block with no heading,
+// so it used to be read as more of the last section (Legendary Actions).
+describe('the description under a stat block', () => {
+  const lore = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-lore.html', import.meta.url), 'utf8'))
+  const run = (overrides: Partial<FillInput> = {}) => plan({ clip: lore, title: 'Test Beast', ...overrides })
+
+  it('puts a divider between the stat block and what follows it', () => {
+    const at = lore.findIndex((b) => b.kind === 'rule')
+    assert.equal(blockText(lore[at - 1] as AnyBlock), 'Onslaught. The beast moves up to half its Speed, and it makes one Bite attack.')
+    assert.equal(blockText(lore[at + 1] as AnyBlock), 'The test beast is a legend told to frighten travellers.')
+    assert.equal(lore.filter((b) => b.kind === 'rule').length, 1)
+  })
+
+  it('leaves no divider when nothing follows the stat block, or a heading does', () => {
+    assert.ok(!goblin.some((b) => b.kind === 'rule'))
+    const assassin = blocks(readFileSync(new URL('./fixtures/dndbeyond-assassin.html', import.meta.url), 'utf8'))
+    assert.ok(!assassin.some((b) => b.kind === 'rule'), 'the site’s own “Description” heading separates them')
+  })
+
+  it('ends the last section at the stat block and fills Description with everything after it', () => {
+    const p = run()
+    assert.equal(slotNamed(p, 'Legendary Actions').text, 'Legendary Action Uses: 3. Immediately after another creature’s turn, the beast can expend a use to take one of the following actions.\nOnslaught. The beast moves up to half its Speed, and it makes one Bite attack.')
+    assert.match(slotNamed(p, 'Bonus Actions').text, /Swallow[\s\S]*regurgitates all swallowed creatures\.$/, 'a section’s own unlabelled paragraph stays in it')
+    const description = slotNamed(p, 'Description')
+    assert.equal(description.status, 'filled')
+    assert.equal(description.origin, 'label')
+    assert.deepEqual(description.candidate!.blocks.map((b) => b.kind), ['paragraph', 'paragraph', 'paragraph', 'table', 'image'])
+    assert.match(description.text, /^The test beast is a legend[\s\S]*Beast Evidence[\s\S]*A scale the size of a shield\./)
+    assert.deepEqual(p.leftovers.map((b) => b.kind), ['paragraph'], 'only the size and type line is left over')
+  })
+
+  it('writes the description under the template’s Description heading', () => {
+    const main = applyComposition(statblock.tree, compose(statblock.tree, run(), { keepUnfilled: false })).docs[0]!
+    const at = main.findIndex((b) => b.kind === 'heading' && blockText(b as AnyBlock) === 'Description')
+    assert.deepEqual(main.slice(at + 1, at + 6).map((b) => b.kind), ['paragraph', 'paragraph', 'paragraph', 'table', 'image'])
+    assert.ok(!JSON.stringify(main.find((b) => b.kind === 'textField' && JSON.stringify(b).includes('Onslaught'))).includes('legend told'))
+  })
+
+  it('lets a site’s own heading or label name the lore instead', () => {
+    const labelled = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-lore.html', import.meta.url), 'utf8').replace('<p>The test beast', '<p><strong>Lore</strong></p><p>The test beast'))
+    const p = run({ clip: labelled })
+    assert.equal(slotNamed(p, 'Description').status, 'empty')
+    assert.ok(!slotNamed(p, 'Legendary Actions').text.includes('legend told'))
+  })
+})
+
 describe('compose and fill', () => {
   const heading: Block = { kind: 'heading', level: 1, content: [{ text: 'From ' }, { mention: { resourceId: 'src' } }] }
 

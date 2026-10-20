@@ -102,6 +102,9 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
     return allBold && text.split(/\s+/).length <= MAX_LABEL_WORDS && !/[.!?]$/.test(text) ? text : undefined
   }
 
+  /** Dividers that end a section of label lines: the end of a stat block. */
+  const statBlockEnds = new Set<number>()
+
   for (let i = 0; i < list.length; i++) {
     const block = list[i]!
     if (block.kind === 'heading') {
@@ -133,11 +136,12 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
         const text = runsText(next.content).trim()
         if (text && text.length <= SHORT_VALUE_CHARS) add({ label: lone, kind: 'pair', runs: next.content as Run[], blocks: [next as Block], text, units: [`b${i}`, `b${i + 1}`] })
       }
-      // "Traits" then its entries, up to the next heading or label line.
+      // "Traits" then its entries, up to the next heading, label line or divider.
       let end = i + 1
-      while (end < list.length && list[end]!.kind !== 'heading' && !loneLabel(list[end])) end++
+      while (end < list.length && list[end]!.kind !== 'heading' && list[end]!.kind !== 'rule' && !loneLabel(list[end])) end++
       const body = list.slice(i + 1, end) as Block[]
       if (body.length > 0) add({ label: lone, kind: 'section', blocks: body, text: body.map((b) => blockText(b as AnyBlock)).join('\n'), units: range(i, end) })
+      if (list[end]?.kind === 'rule') statBlockEnds.add(end)
       continue
     }
 
@@ -163,6 +167,15 @@ export function extractCandidates(blocks: Block[], options: ExtractOptions): Ext
       out.push({ from: indexAt(pieces.offsets, segment.start), to: indexAt(pieces.offsets, segment.end), unit })
     })
     if (out.length > 0) split.set(i, { runs: pieces.runs, segments: out })
+  }
+  // A stat block's creature description follows it with no heading of its own (D&D Beyond's lore,
+  // tables and images under the stat block): everything after the divider is the "Description".
+  // When the site gives it a heading or label, that labels it instead.
+  for (const i of statBlockEnds) {
+    const next = list[i + 1]
+    if (!next || next.kind === 'heading' || loneLabel(next)) continue
+    const body = list.slice(i + 1) as Block[]
+    add({ label: 'Description', kind: 'section', blocks: body, text: body.map((b) => blockText(b as AnyBlock)).join('\n'), units: range(i, list.length) })
   }
   return { candidates, split, captions }
 }
