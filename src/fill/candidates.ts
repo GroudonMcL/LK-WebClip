@@ -208,6 +208,11 @@ function tableCandidates(table: AnyBlock, i: number, add: (c: Omit<Candidate, 'i
     if (!first || rest.length === 0) return
     const label = blockText(first).trim()
     if (!label || label.length > MAX_LABEL_CHARS || /^[\d\s.,+\-–()/%]+$/.test(label)) return
+    const ability = abilityValue(label, rest.map((cell) => blockText(cell).trim()))
+    if (ability) {
+      add({ label, kind: 'pair', runs: [{ text: ability }], blocks: [{ kind: 'paragraph', content: [{ text: ability }] }], text: ability, units: [`b${i}.r${r}`] })
+      return
+    }
     const value: Run[] = []
     for (const cell of rest) {
       const runs = cellRuns(cell)
@@ -218,6 +223,22 @@ function tableCandidates(table: AnyBlock, i: number, add: (c: Omit<Candidate, 'i
     const text = runsText(value).trim()
     if (text) add({ label, kind: 'pair', runs: value, blocks: [{ kind: 'paragraph', content: value }], text, units: [`b${i}.r${r}`] })
   })
+}
+
+const ABILITY = /^(?:str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma)$/i
+const SIGNED = /^[+\-−–]?\d+$/
+
+/**
+ * A row of a 2024 stat block's ability table, "STR | 30 | +10 | +10" under "MOD" and "SAVE", as the
+ * value an ability field takes: "30 (+10)", with the saving throw added only when it differs from
+ * the modifier: "11 (+0, Save +8)".
+ */
+export function abilityValue(label: string, cells: string[]): string | undefined {
+  if (!ABILITY.test(label)) return undefined
+  const [score, mod, save, ...more] = cells.filter((c) => c !== '')
+  if (!score || !mod || more.length > 0 || !/^\d+$/.test(score) || !SIGNED.test(mod) || (save !== undefined && !SIGNED.test(save))) return undefined
+  const norm = (n: string) => Number(n.replace(/[−–]/g, '-'))
+  return save === undefined || norm(save) === norm(mod) ? `${score} (${mod})` : `${score} (${mod}, Save ${save})`
 }
 
 interface Segment {
@@ -398,7 +419,10 @@ export function goneBlocks(blocks: Block[], extraction: Pick<Extraction, 'captio
     else if (block.kind === 'table') {
       const rows = block.children.length
       const columns = (block.children[0] as AnyBlock | undefined)?.children?.length ?? 0
-      const allRows = rows > 0 && Array.from({ length: rows }, (_, r) => units.has(`b${i}.r${r}`)).every(Boolean)
+      // A header row ("MOD", "SAVE") goes with the rows under it.
+      const headerRow = (r: number) => ((block.children[r] as AnyBlock).children as AnyBlock[]).every((cell) => cell.header || blockText(cell).trim() === '')
+      const usedRows = Array.from({ length: rows }, (_, r) => units.has(`b${i}.r${r}`))
+      const allRows = usedRows.some(Boolean) && usedRows.every((used, r) => used || headerRow(r))
       const allColumns = columns > 0 && Array.from({ length: columns }, (_, c) => units.has(`b${i}.c${c}`)).every(Boolean)
       if (allRows || allColumns) gone.add(i)
     }

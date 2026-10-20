@@ -5,7 +5,7 @@ import { DOMParser } from 'linkedom'
 import type { Block } from '@legendkeeper/sdk/blocks'
 import { htmlStringToBlocks, mapBlocks } from '../src/clip/htmlToBlocks.js'
 import { AiAnswerError, buildAiJob, parseAiAnswer, slotsForAi } from '../src/fill/ai.js'
-import { extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
+import { abilityValue, extractCandidates, leftoverBlocks } from '../src/fill/candidates.js'
 import { appendTree, appendedTemplate, applyComposition, compose, tidyRules } from '../src/fill/compose.js'
 import { listFreeModels, OpenRouterEngine, OpenRouterError, suggest, type AiEngine } from '../src/fill/engines.js'
 import { cleanLabel, compareLabels, DEFAULT_SYNONYMS, isPlaceholderText, LabelMatch, namedMatch, parseSynonyms, placeholderLabels, Synonyms } from '../src/fill/labels.js'
@@ -157,6 +157,19 @@ describe('planFill', () => {
     // The name line is the page title, so it isn't repeated in the unused content.
     assert.equal(text(p.leftovers), 'Small Humanoid (Goblinoid), Neutral Evil')
     assert.equal(slotNamed(p, 'Proficiency Bonus').text, '+2')
+  })
+
+  it('reads a 2024 ability table (score, MOD, SAVE), adding the save only when it differs', () => {
+    const clip = blocks(readFileSync(new URL('./fixtures/dndbeyond-2024-abilities.html', import.meta.url), 'utf8'))
+    const p = planFill({ tree: statblock.tree, templateId: statblock.id, clip, title: 'Ancient Red Dragon', site: 'dndbeyond.com', synonyms, rules: [], mode: 'labels', overrides: {}, derived: parseDerived(DEFAULT_DERIVED) })
+    assert.equal(slotNamed(p, 'Strength').text, '30 (+10)')
+    assert.equal(slotNamed(p, 'Dexterity').text, '10 (+0, Save +7)')
+    assert.equal(slotNamed(p, 'Wisdom').text, '15 (+2, Save +9)')
+    assert.equal(slotNamed(p, 'Charisma').text, '27 (−8)')
+    assert.ok(!p.leftovers.some((b) => b.kind === 'table'), 'both tables, header rows included, are used up')
+    assert.equal(abilityValue('Str', ['30', '+10']), '30 (+10)', 'a table without saves')
+    assert.equal(abilityValue('Level', ['1', '+2', '+3']), undefined)
+    assert.equal(deriveValue('10 (+0, Save +7)', 'modifier'), '+0', 'the modifier, not the save')
   })
 
   it('never guesses between two equally good values', () => {

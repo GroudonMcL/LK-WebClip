@@ -38,7 +38,7 @@ export const DND5E_STATBLOCK: NotesPack = {
     '- Initiative: the Dexterity modifier, then 10 plus it in brackets, e.g. "+3 (13)". 2024 stat blocks state it; for older ones it is worked out from Dexterity.',
     '- Hit Points: the average, then the dice in brackets, e.g. "78 (12d8 + 24)". 2024 stat blocks write "HP".',
     '- Speed: every speed, walking first, e.g. "30 ft., Climb 30 ft., Fly 60 ft. (hover)".',
-    '- Strength, Dexterity, Constitution, Intelligence, Wisdom, Charisma: the score, then the modifier in brackets, e.g. "16 (+3)". Clips often give them as a table or a row ("STR 16 (+3)"); a 2024 table also gives a saving throw, which does not belong here.',
+    '- Strength, Dexterity, Constitution, Intelligence, Wisdom, Charisma: the score, then the modifier in brackets, e.g. "16 (+3)". Clips often give them as a table or a row ("STR 16 (+3)"). A 2024 table also gives a saving throw (MOD and SAVE columns): add it only when it differs from the modifier, e.g. "11 (+0, Save +8)".',
     '- Skills: each skill with its bonus, e.g. "Perception +5, Stealth +6".',
     '- Resistances: the damage types it resists, as listed. Not vulnerabilities.',
     '- Immunities: damage immunities, then any condition immunities after "; ", e.g. "Poison; Charmed, Poisoned". Older stat blocks list them on separate "Damage Immunities" and "Condition Immunities" lines.',
