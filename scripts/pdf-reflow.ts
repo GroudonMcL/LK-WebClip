@@ -2,7 +2,7 @@
  * Prototype for the PDF reader: reflows a PDF into clean HTML and writes a side-by-side page
  * (original page on the left, reflowed text on the right) for checking the result.
  *
- *   npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--json]
+ *   npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--layout layout.json] [--json]
  *
  * Writes <out-dir>/index.html with the reflowed text and extracted images. The page renders on the
  * left need poppler's `pdftoppm`; without it only the reflowed text is shown. `--json` also writes
@@ -28,9 +28,10 @@ const flag = (name: string) => {
 const json = args.includes('--json') ? (args.splice(args.indexOf('--json'), 1), true) : false
 const range = flag('--pages')
 const styles = flag('--styles')
+const layout = flag('--layout')
 const [file, outArg] = args
 if (!file) {
-  console.error('Usage: npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--json]')
+  console.error('Usage: npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--layout layout.json] [--json]')
   process.exit(1)
 }
 const out = outArg ?? `dist/pdf-reflow/${basename(file, '.pdf')}`
@@ -59,8 +60,13 @@ for (const image of pickImages(pages)) {
   imageFiles.set(`${image.page}:${image.id}`, name)
 }
 
-const options: ReflowOptions = styles ? { styles: JSON.parse(await readFile(styles, 'utf8')) } : {}
+// --layout takes the reader's Layout as JSON: {"columns": 2, "divider": {"odd": 0.48}, "margins": {"right": 0.1}}.
+const options: ReflowOptions = {
+  ...(styles ? { styles: JSON.parse(await readFile(styles, 'utf8')) } : {}),
+  ...(layout ? { layout: JSON.parse(await readFile(layout, 'utf8')) } : {}),
+}
 const result = reflow(pages, options)
+if (result.scanned.length) console.warn(`${result.scanned.length} page(s) carry invisible (OCR) text: the layout is only approximate.`)
 
 let pageImages: Map<number, string> | undefined
 try {

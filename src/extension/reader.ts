@@ -11,12 +11,12 @@
 import { getDocument, GlobalWorkerOptions, OPS, type PDFDocumentLoadingTask, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { Capture } from '../clip/importClip.js'
 import { extractPage, pageImage, type PdfImageData } from '../pdf/extract.js'
-import { reflow, type ReflowResult, type Role } from '../pdf/reflow.js'
+import { reflow, type Layout, type ReflowResult, type Role } from '../pdf/reflow.js'
 import { blocksToHtml } from '../pdf/render.js'
 import type { PageContent } from '../pdf/types.js'
 import './capture.js'
 import type { CaptureRequest } from './capture.js'
-import { clear, el } from './dom.js'
+import { clear, debounce, el } from './dom.js'
 import { setPendingCapture } from './state.js'
 import { registerReaderTab, type ReaderCaptureMessage, type ReaderCaptureReply } from './tabCapture.js'
 
@@ -34,9 +34,17 @@ const main = $('main')
 const pagesPane = $('pages')
 const textPane = $('text')
 const flow = $('flow')
+const side = $('side')
+const contentsPane = $('contents')
 const stylesPane = $('styles')
+const layoutPane = $('layout')
 const sendButton = $<HTMLButtonElement>('send')
-const stylesButton = $<HTMLButtonElement>('toggle-styles')
+const panelButtons = { contents: $<HTMLButtonElement>('toggle-contents'), styles: $<HTMLButtonElement>('toggle-styles'), layout: $<HTMLButtonElement>('toggle-layout') }
+type Panel = keyof typeof panelButtons
+const pageInput = $<HTMLInputElement>('page-input')
+const pageCount = $('page-count')
+const prevButton = $<HTMLButtonElement>('prev-page')
+const nextButton = $<HTMLButtonElement>('next-page')
 const fileInput = $<HTMLInputElement>('file')
 const drop = $('drop')
 
@@ -49,6 +57,7 @@ interface Book {
   pages: PageContent[]
   result?: ReflowResult
   overrides: Record<string, Role>
+  layout: Layout
   images: Map<string, Promise<Blob | null>>
   /** A second copy of the PDF that only decodes images (see `imageBlob`), and the pages it has read. */
   imageDoc?: { task: PDFDocumentLoadingTask; pagesRead: number }
@@ -69,6 +78,8 @@ async function start(): Promise<void> {
   chrome.runtime.onMessage.addListener(onMessage)
   wireFileOpening()
   wirePanes()
+  wireNavigation()
+  wirePanels()
 
   const src = new URLSearchParams(location.search).get('src')
   if (!src) return showDrop('Open a PDF to read and clip it.')
@@ -162,14 +173,23 @@ async function openBook(data: Uint8Array, url: string, name: string): Promise<vo
   const info = (await doc.getMetadata().catch(() => undefined))?.info as { Title?: string } | undefined
   const title = info?.Title?.trim() && !/^untitled|\.(indd|docx?|pdf)$/i.test(info.Title.trim()) ? info.Title.trim() : bookName(name)
   const fingerprint = doc.fingerprints[0] ?? url
-  const stored = await chrome.storage.local.get(stylesKey(fingerprint))
+  const stored = await chrome.storage.local.get([stylesKey(fingerprint), layoutKey(fingerprint)])
   book?.task.destroy().catch(() => {})
   book?.imageDoc?.task.destroy().catch(() => {})
-  book = { doc, task, bytes, url, title, fingerprint, pages: [], overrides: (stored[stylesKey(fingerprint)] as Record<string, Role> | undefined) ?? {}, images: new Map(), loaded: false }
+  book = {
+    doc, task, bytes, url, title, fingerprint, pages: [], images: new Map(), loaded: false,
+    overrides: (stored[stylesKey(fingerprint)] as Record<string, Role> | undefined) ?? {},
+    layout: (stored[layoutKey(fingerprint)] as Layout | undefined) ?? {},
+  }
   document.title = `${title} · LK Reader`
   titleEl.textContent = title
   clear(flow)
   buildPagePlaceholders(doc.numPages)
+  pageCount.textContent = String(doc.numPages)
+  pageInput.max = String(doc.numPages)
+  pageInput.value = '1'
+  for (const control of [pageInput, prevButton, nextButton]) control.disabled = false
+  for (const button of Object.values(panelButtons)) button.disabled = false
 
   for (let n = 1; n <= doc.numPages; n++) {
     if (run !== generation) return
@@ -182,7 +202,6 @@ async function openBook(data: Uint8Array, url: string, name: string): Promise<vo
   }
   book.loaded = true
   showText()
-  stylesButton.disabled = false
 }
 
 function bookName(file: string): string {
@@ -198,21 +217,24 @@ function fileName(src: string): string {
 }
 
 const stylesKey = (fingerprint: string) => `pdfStyles:${fingerprint}`
+const layoutKey = (fingerprint: string) => `pdfLayout:${fingerprint}`
 
 // ---------------------------------------------------------------------------------- the text
 
 function showText(): void {
   if (!book) return
   const anchor = scrollAnchor()
-  book.result = reflow(book.pages, { styles: book.overrides })
+  book.result = reflow(book.pages, { styles: book.overrides, layout: book.layout })
   flow.innerHTML = blocksToHtml(book.result.blocks, () => '', { statblockButton: 'Send to LegendKeeper' })
   for (const img of Array.from(flow.querySelectorAll<HTMLImageElement>('img[data-pdf-image]'))) imageObserver.observe(img)
   if (anchor) restoreAnchor(anchor)
   const total = book.doc.numPages
+  const scanned = book.result.scanned.length ? ' · a scan with recognised text: see Layout' : ''
   statusEl.textContent = book.loaded || book.pages.length === total
-    ? `${total} page${total === 1 ? '' : 's'} · select text and right-click “Send to LegendKeeper”, or use the buttons`
+    ? `${total} page${total === 1 ? '' : 's'}${scanned} · select text and right-click “Send to LegendKeeper”, or use the buttons`
     : `Reading page ${book.pages.length} of ${total}…`
-  if (!stylesPane.hidden) renderStyles()
+  updateOverlays()
+  renderPanel()
 }
 
 /** The first block in view, so re-showing the text (as more pages load) keeps the reader's place. */
@@ -407,6 +429,7 @@ function wirePanes(): void {
   pagesPane.addEventListener('click', (e) => {
     const page = (e.target as Element).closest<HTMLElement>('.page')
     if (!page) return
+    if (placing) return placeDivider(page, e)
     const rect = page.getBoundingClientRect()
     const n = Number(page.dataset.page)
     const y = ((e.clientY - rect.top) / rect.height) * Number(page.dataset.h ?? 792)
@@ -428,11 +451,6 @@ function wirePanes(): void {
     if (!selectionInFlow()) return
     send({ kind: 'selection' })
   })
-  stylesButton.addEventListener('click', () => {
-    stylesPane.hidden = !stylesPane.hidden
-    main.classList.toggle('with-styles', !stylesPane.hidden)
-    if (!stylesPane.hidden) renderStyles()
-  })
 }
 
 function highlight(block: HTMLElement, scroll: boolean): void {
@@ -449,7 +467,9 @@ function highlight(block: HTMLElement, scroll: boolean): void {
   }
   if (scroll && first) {
     syncing = true
-    first.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // Smooth when it is close by; a jump across the book just goes there.
+    const distance = Math.abs(first.getBoundingClientRect().top - pagesPane.getBoundingClientRect().top)
+    first.scrollIntoView({ block: 'center', behavior: distance > 2 * pagesPane.clientHeight ? 'instant' : 'smooth' })
     setTimeout(() => (syncing = false), 600)
   }
 }
@@ -467,6 +487,240 @@ function followText(): void {
   if (!page) return
   const target = page.offsetTop + (box[2] / Number(page.dataset.h ?? 792)) * page.offsetHeight - 80
   if (Math.abs(pagesPane.scrollTop - target) > pagesPane.clientHeight / 2) pagesPane.scrollTop = target
+}
+
+// ---------------------------------------------------------------------------------- page navigation
+
+function wireNavigation(): void {
+  prevButton.addEventListener('click', () => goToPage(currentPage() - 1))
+  nextButton.addEventListener('click', () => goToPage(currentPage() + 1))
+  pageInput.addEventListener('change', () => goToPage(Number(pageInput.value)))
+  pageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { goToPage(Number(pageInput.value)); pageInput.blur() }
+  })
+  pageInput.addEventListener('focus', () => pageInput.select())
+  pagesPane.addEventListener('scroll', () => {
+    if (document.activeElement !== pageInput) pageInput.value = String(currentPage())
+  }, { passive: true })
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const target = e.target as HTMLElement | null
+    if (target && (target.closest('input, select, textarea, button') || target.isContentEditable)) return
+    if (e.key === 'ArrowLeft') { goToPage(currentPage() - 1); e.preventDefault() }
+    else if (e.key === 'ArrowRight') { goToPage(currentPage() + 1); e.preventDefault() }
+    else if (e.key === 'Escape' && placing) stopPlacing()
+  })
+}
+
+/** The page shown in the pages pane: the one a little way down from its top. */
+function currentPage(): number {
+  const rect = pagesPane.getBoundingClientRect()
+  const at = rect.top + Math.min(rect.height * 0.4, 400)
+  const page = Array.from(pagesPane.querySelectorAll<HTMLElement>('.page')).find((p) => p.getBoundingClientRect().bottom > at)
+  return Number(page?.dataset.page ?? 1)
+}
+
+/** Shows a page on the left and its text on the right. */
+function goToPage(n: number): void {
+  if (!book) return
+  n = Math.min(Math.max(1, Math.round(n) || 1), book.doc.numPages)
+  const page = pagesPane.querySelector<HTMLElement>(`.page[data-page="${n}"]`)
+  if (!page) return
+  pageInput.value = String(n)
+  syncing = true
+  scrollTo(pagesPane, page, 8)
+  // The text of that page, or the first page after it that has any.
+  const marker = Array.from(flow.querySelectorAll<HTMLElement>('.page-marker')).find((m) => Number(m.dataset.page) >= n)
+  if (marker) scrollTo(textPane, marker, 8)
+  else if (book.loaded) textPane.scrollTop = textPane.scrollHeight
+  setTimeout(() => (syncing = false), 100)
+}
+
+/** Scrolls a pane so that an element in it sits `gap` pixels below the pane's top. */
+function scrollTo(pane: HTMLElement, element: HTMLElement, gap: number): void {
+  pane.scrollTop += element.getBoundingClientRect().top - pane.getBoundingClientRect().top - gap
+}
+
+// ---------------------------------------------------------------------------------- the side panel
+
+let panel: Panel | null = null
+
+function wirePanels(): void {
+  for (const [name, button] of Object.entries(panelButtons) as [Panel, HTMLButtonElement][]) {
+    button.addEventListener('click', () => showPanel(panel === name ? null : name))
+  }
+}
+
+function showPanel(name: Panel | null): void {
+  panel = name
+  side.hidden = !name
+  main.classList.toggle('with-side', !!name)
+  for (const [key, button] of Object.entries(panelButtons)) button.setAttribute('aria-pressed', String(key === name))
+  contentsPane.hidden = name !== 'contents'
+  stylesPane.hidden = name !== 'styles'
+  layoutPane.hidden = name !== 'layout'
+  renderPanel()
+}
+
+function renderPanel(): void {
+  if (panel === 'contents') renderContents()
+  else if (panel === 'styles') renderStyles()
+  else if (panel === 'layout') renderLayout()
+}
+
+// ---------------------------------------------------------------------------------- contents
+
+function renderContents(): void {
+  if (!book?.result) return
+  const headings = Array.from(flow.querySelectorAll<HTMLElement>('h1[data-boxes], h2[data-boxes], h3[data-boxes], h4[data-boxes]'))
+  const filter = el('input', { type: 'search', class: 'toc-filter', placeholder: 'Find a heading…', 'aria-label': 'Find a heading' })
+  const list = el('ul', { class: 'toc' })
+  const fill = () => {
+    const needle = filter.value.trim().toLowerCase()
+    clear(list, ...headings
+      .filter((h) => !needle || (h.textContent ?? '').toLowerCase().includes(needle))
+      .map((h) => {
+        const [box] = boxesOf(h)
+        return el('li', { class: `l${h.tagName.slice(1)}` },
+          el('button', { type: 'button', onclick: () => jumpTo(h) }, el('span', {}, h.textContent ?? ''), el('span', { class: 'toc-page' }, box ? `p. ${box[0]}` : '')))
+      }))
+  }
+  filter.addEventListener('input', debounce(fill, 150))
+  fill()
+  clear(contentsPane,
+    el('h2', {}, 'Contents'),
+    el('p', { class: 'muted' }, headings.length
+      ? `${headings.length} heading${headings.length === 1 ? '' : 's'} found. If some are missing or wrong, correct their text styles under Headings.`
+      : 'No headings found yet. Under Headings, mark the styles that are headings in this PDF.'),
+    filter, list)
+}
+
+/** Scrolls the text to a block and shows where it sits on the page. */
+function jumpTo(block: HTMLElement): void {
+  syncing = true
+  scrollTo(textPane, block, 12)
+  highlight(block, true)
+}
+
+// ---------------------------------------------------------------------------------- layout
+
+let placing = false
+
+function renderLayout(): void {
+  if (!book?.result) return
+  const current = book
+  const layout = current.layout
+  const found = current.result!.dividers
+  const here = found[currentPage()]
+  const pct = (fraction: number | undefined) => (fraction === undefined ? '—' : `${Math.round(fraction * 100)}%`)
+  const save = debounce(() => void setLayout(current, layout), 300)
+
+  const columns = el('select', { 'aria-label': 'Columns' },
+    el('option', { value: 'auto', selected: !layout.columns || layout.columns === 'auto' }, 'Find them (auto)'),
+    el('option', { value: '1', selected: layout.columns === 1 }, 'One column'),
+    el('option', { value: '2', selected: layout.columns === 2 }, 'Two columns'))
+  columns.addEventListener('change', () => {
+    layout.columns = columns.value === 'auto' ? 'auto' : (Number(columns.value) as 1 | 2)
+    void setLayout(current, layout)
+  })
+
+  const margin = (key: keyof NonNullable<Layout['margins']>, label: string) => {
+    const input = el('input', { type: 'number', min: 0, max: 45, step: 1, value: String(Math.round((layout.margins?.[key] ?? 0) * 100)), 'aria-label': `${label} margin, % of the page` })
+    input.addEventListener('input', () => {
+      layout.margins = { ...layout.margins, [key]: Math.min(Math.max(Number(input.value) || 0, 0), 45) / 100 }
+      updateOverlays()
+      save()
+    })
+    return el('label', {}, `${label} %`, input)
+  }
+  const clearDivider = (sideKey: 'odd' | 'even') => el('button', { type: 'button', class: 'link', onclick: () => { if (layout.divider) delete layout.divider[sideKey]; void setLayout(current, layout) } }, 'Clear')
+
+  clear(layoutPane,
+    el('h2', {}, 'Layout'),
+    el('p', { class: 'muted' }, 'When the text comes out scrambled (columns mixed, lines turned into tables), tell the reader how the pages are laid out. Settings are remembered for this PDF.'),
+    current.result!.scanned.length
+      ? el('p', { class: 'notice' }, `This PDF is a scan with recognised text laid over it (${current.result!.scanned.length} page${current.result!.scanned.length === 1 ? '' : 's'}). Positions and fonts are only approximate, so the layout and the headings may need setting by hand.`)
+      : null,
+    el('div', { class: 'field' },
+      el('label', {}, 'Columns'), columns,
+      el('span', { class: 'hint' }, 'Pages are split at the divider: the dashed line on each page shows where it was found.')),
+    el('div', { class: 'field' },
+      el('label', {}, 'Column divider'),
+      el('button', { type: 'button', onclick: () => (placing ? stopPlacing() : startPlacing()) }, placing ? 'Cancel' : 'Set on a page…'),
+      el('span', { class: 'hint' }, here === undefined
+        ? `Not found on page ${currentPage()}: it is read as one column.`
+        : `Found on page ${currentPage()} at ${pct(here / (current.pages.find((p) => p.number === currentPage())?.width ?? 1))} of the width.`),
+      el('div', { class: 'divider-row' }, el('span', {}, `Right-hand (odd) pages: ${pct(layout.divider?.odd)}`), layout.divider?.odd !== undefined ? clearDivider('odd') : null),
+      el('div', { class: 'divider-row' }, el('span', {}, `Left-hand (even) pages: ${pct(layout.divider?.even)}`), layout.divider?.even !== undefined ? clearDivider('even') : null),
+      el('span', { class: 'hint' }, 'Click “Set on a page…”, then click where the columns divide on a page. Books mirror their margins, so set it on an odd and on an even page.')),
+    el('div', { class: 'field' },
+      el('label', {}, 'Margins to leave out'),
+      el('span', {}),
+      el('div', { class: 'margins' }, margin('top', 'Top'), margin('bottom', 'Bottom'), margin('left', 'Left'), margin('right', 'Right')),
+      el('span', { class: 'hint' }, 'Running heads, page numbers and chapter tabs along an edge: shade them out and they are left out of the text.')),
+    el('div', { class: 'actions' },
+      Object.keys(layout).length ? el('button', { type: 'button', onclick: () => void setLayout(current, {}) }, 'Reset layout') : null),
+  )
+}
+
+function startPlacing(): void {
+  placing = true
+  pagesPane.classList.add('placing')
+  statusEl.textContent = 'Click where the columns divide on a page (Esc to cancel).'
+  renderPanel()
+}
+
+function stopPlacing(): void {
+  placing = false
+  pagesPane.classList.remove('placing')
+  showText()
+}
+
+/** A click on a page while placing sets the divider for pages on that side of the spine. */
+function placeDivider(page: HTMLElement, e: MouseEvent): void {
+  if (!book) return
+  const rect = page.getBoundingClientRect()
+  const fraction = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0.1), 0.9)
+  const n = Number(page.dataset.page)
+  book.layout.divider = { ...book.layout.divider, [n % 2 ? 'odd' : 'even']: Math.round(fraction * 1000) / 1000 }
+  placing = false
+  pagesPane.classList.remove('placing')
+  void setLayout(book, book.layout)
+}
+
+async function setLayout(target: Book, layout: Layout): Promise<void> {
+  // Drop what is unset, so a reset layout is an empty one.
+  const clean: Layout = {}
+  if (layout.columns && layout.columns !== 'auto') clean.columns = layout.columns
+  const divider = Object.fromEntries(Object.entries(layout.divider ?? {}).filter(([, v]) => v !== undefined)) as Layout['divider']
+  if (divider && Object.keys(divider).length) clean.divider = divider
+  const margins = Object.fromEntries(Object.entries(layout.margins ?? {}).filter(([, v]) => v)) as Layout['margins']
+  if (margins && Object.keys(margins).length) clean.margins = margins
+  target.layout = clean
+  if (Object.keys(clean).length) await chrome.storage.local.set({ [layoutKey(target.fingerprint)]: clean })
+  else await chrome.storage.local.remove(layoutKey(target.fingerprint))
+  if (book === target) showText()
+}
+
+/** Draws the dividers and shaded margins on every page. */
+function updateOverlays(): void {
+  if (!book) return
+  const { layout } = book
+  const dividers = book.result?.dividers ?? {}
+  for (const page of Array.from(pagesPane.querySelectorAll<HTMLElement>('.page'))) {
+    for (const old of Array.from(page.querySelectorAll('.divider, .margin-shade'))) old.remove()
+    const n = Number(page.dataset.page)
+    const w = Number(page.dataset.w ?? 612)
+    const manual = layout.columns === 1 ? undefined : layout.divider?.[n % 2 ? 'odd' : 'even'] ?? layout.divider?.odd ?? layout.divider?.even
+    const auto = dividers[n]
+    const x = manual ?? (auto === undefined ? undefined : auto / w)
+    if (x !== undefined) page.append(el('div', { class: `divider${manual !== undefined ? ' manual' : ''}`, style: `left:${x * 100}%` }))
+    const m = layout.margins ?? {}
+    if (m.top) page.append(el('div', { class: 'margin-shade', style: `left:0;right:0;top:0;height:${m.top * 100}%` }))
+    if (m.bottom) page.append(el('div', { class: 'margin-shade', style: `left:0;right:0;bottom:0;height:${m.bottom * 100}%` }))
+    if (m.left) page.append(el('div', { class: 'margin-shade', style: `top:0;bottom:0;left:0;width:${m.left * 100}%` }))
+    if (m.right) page.append(el('div', { class: 'margin-shade', style: `top:0;bottom:0;right:0;width:${m.right * 100}%` }))
+  }
 }
 
 // ---------------------------------------------------------------------------------- text styles
