@@ -116,6 +116,69 @@ try {
     await reader.click('#toggle-styles')
   }
 
+  // A page's layout set by hand is used and remembered.
+  const firstPage = await reader.$eval('#flow .page-marker', (m) => Number((m as HTMLElement).dataset.page))
+  const marker = `#flow .page-marker[data-page="${firstPage}"]`
+  check(/^Auto: /.test(await reader.$eval(`${marker} .page-layout option[value="auto"]`, (o) => o.textContent ?? '')), 'each page shows the layout it was read with')
+  await reader.selectOption(`${marker} .page-layout`, 'one')
+  await reader.waitForFunction((m) => (document.querySelector(`${m} .page-layout`) as HTMLSelectElement | null)?.value === 'one', marker)
+  const stored = await reader.evaluate(async () => Object.entries(await chrome.storage.local.get(null)).find(([k]) => k.startsWith('pdfPages:'))?.[1]) as { layouts?: Record<string, string> } | undefined
+  check(stored?.layouts?.[firstPage] === 'one', 'a page layout set by hand is saved')
+  await reader.selectOption(`${marker} .page-layout`, 'auto')
+
+  // Marking an area to leave out takes its text out of the reflowed copy; removing the area brings it back.
+  const pageText = () => reader.$eval(`#flow .page-text[data-page="${firstPage}"]`, (d) => d.textContent ?? '').catch(() => '')
+  const before = await pageText()
+  await reader.click('#mark-area')
+  await reader.$eval(`#pages .page[data-page="${firstPage}"]`, (p) => p.scrollIntoView({ block: 'start' }))
+  const pageBox = (await (await reader.$(`#pages .page[data-page="${firstPage}"]`))!.boundingBox())!
+  await reader.mouse.move(pageBox.x + 2, pageBox.y + 2)
+  await reader.mouse.down()
+  await reader.mouse.move(pageBox.x + pageBox.width - 2, pageBox.y + pageBox.height * 0.3, { steps: 4 })
+  await reader.mouse.up()
+  await reader.click('.region-menu button:has-text("Leave out")')
+  await reader.waitForSelector(`#pages .page[data-page="${firstPage}"] .region-skip`)
+  const after = await pageText()
+  check(after.length < before.length, 'an area marked “Leave out” is left out of the text')
+  if (shots) await reader.screenshot({ path: join(resolve(shots), 'reader-regions.png') })
+  await reader.click(`#pages .page[data-page="${firstPage}"] .region-skip .region-label button`)
+  await reader.waitForFunction(() => !document.querySelector('#pages .region'))
+  check((await pageText()) === before, 'removing the area brings its text back')
+  await reader.click('#mark-area')
+
+  // Editing a page's text keeps the edit: after reading the PDF again, and in what is clipped.
+  await reader.click(`${marker} .page-tools button:has-text("Edit text")`)
+  await reader.evaluate((n) => {
+    const p = document.querySelector(`#flow .page-text[data-page="${n}"] p, #flow .page-text[data-page="${n}"] h1, #flow .page-text[data-page="${n}"] h2`)!
+    const range = document.createRange()
+    range.setStart(p.firstChild ?? p, 0)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+    document.execCommand('insertText', false, 'Edited by hand: ')
+  }, firstPage)
+  if (shots) await reader.screenshot({ path: join(resolve(shots), 'reader-editing.png') })
+  await reader.keyboard.press('Control+Enter')
+  await reader.waitForSelector(`${marker} .edited`)
+  await reader.reload()
+  await reader.waitForFunction(() => !/Reading|Opening/.test(document.getElementById('status')?.textContent ?? '') && document.querySelector('#flow [data-boxes]'), null, { timeout: 120_000 })
+  check((await pageText()).includes('Edited by hand: '), 'an edited page keeps its edit when the PDF is opened again')
+  await reader.evaluate(() => getSelection()?.removeAllRanges())
+  await reader.evaluate(() => document.getElementById('text')!.scrollTo({ top: 0 }))
+  const readerTabAgain = await reader.evaluate(async () => (await chrome.tabs.getCurrent())?.id)
+  const edited = await panel.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'lk-reader-capture', tabId, request: { kind: 'article' } }), readerTabAgain) as { capture?: { html: string } }
+  check(edited.capture?.html.includes('Edited by hand: ') && !/page-text|page-tools/.test(edited.capture.html), 'a clip takes the edited text')
+  await reader.click(`${marker} .page-tools button:has-text("Undo edit")`)
+  await reader.waitForFunction((m) => !document.querySelector(`${m} .edited`), marker)
+  check(!(await pageText()).includes('Edited by hand: '), 'undoing an edit brings back the reflowed text')
+
+  // Scan mode can be turned on and off from the Headings panel.
+  await reader.click('#toggle-styles')
+  await reader.click('#styles .scan-mode input')
+  await reader.waitForFunction(() => /scan mode/.test(document.getElementById('status')?.textContent ?? ''))
+  check(true, 'scan mode can be turned on')
+  await reader.click('#styles .scan-mode input')
+  await reader.click('#toggle-styles')
+
   // A local file opens when the extension may read files, and otherwise explains how to allow it.
   const allowed = await reader.evaluate(() => chrome.extension.isAllowedFileSchemeAccess())
   const local = await context.newPage()
