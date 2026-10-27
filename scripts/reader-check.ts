@@ -179,6 +179,24 @@ try {
   await reader.click('#styles .scan-mode input')
   await reader.click('#toggle-styles')
 
+  // Paging, the contents, and the Layout panel with the dividers drawn on the pages.
+  await reader.fill('#page-input', '3')
+  await reader.press('#page-input', 'Enter')
+  await reader.waitForTimeout(300)
+  check(await reader.$eval('#page-input', (i) => (i as HTMLInputElement).value) === '3', 'going to a page by its number')
+  await reader.click('#next-page')
+  check(await reader.$eval('#page-input', (i) => (i as HTMLInputElement).value) === '4', 'the next-page button')
+  await reader.click('#toggle-contents')
+  const toc = await reader.$$eval('#contents .toc button', (bs) => bs.length)
+  check(toc === stats.headings + (await reader.$$eval('#flow h4', (h) => h.length)), 'Contents lists every heading')
+  await reader.click('#toggle-layout')
+  check(await reader.$('#layout select'), 'the Layout panel opens')
+  const dividers = await reader.$$eval('#pages .page', (pages) => pages.map((p) => p.querySelectorAll('.divider').length))
+  console.log(`  dividers per page: ${dividers.join(', ')}`)
+  check(dividers.some((n) => n > 0), 'column dividers are drawn on the pages')
+  if (shots) await reader.screenshot({ path: join(resolve(shots), 'reader-layout.png') })
+  await reader.click('#toggle-layout')
+
   // A local file opens when the extension may read files, and otherwise explains how to allow it.
   const allowed = await reader.evaluate(() => chrome.extension.isAllowedFileSchemeAccess())
   const local = await context.newPage()

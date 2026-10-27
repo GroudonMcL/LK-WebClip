@@ -33,9 +33,12 @@ export interface PdfImage extends Box {
 
 export interface PageContent {
   number: number
+  /** The size of the page as shown (its CropBox, turned by its /Rotate), in points. */
   width: number
   height: number
   text: PdfText[]
   shapes: PdfShape[]
   images: PdfImage[]
+  /** Some text is drawn invisibly: the recognised text that OCR lays over a scanned page. */
+  hiddenText?: boolean
 }

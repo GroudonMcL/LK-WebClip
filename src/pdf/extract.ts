@@ -4,9 +4,12 @@ import type { Box, PageContent, PdfImage, PdfShape, PdfText } from './types.js'
 /**
  * Reads one PDF page with pdf.js into positioned text, filled shapes and images.
  *
- * Coordinates are PDF points with the origin at the top left (y grows downwards), so they line
- * up with the rendered page. pdf.js must be opened with `fontExtraProperties: true`, or the real
- * font names (which tell headings, body text and stat blocks apart) are not available.
+ * Coordinates are PDF points with the origin at the top left of the page as it is shown (y grows
+ * downwards), so they line up with the rendered page. That is pdf.js's viewport at scale 1, which
+ * also takes care of pages whose CropBox does not start at the origin (common in print PDFs, where
+ * the trimmed page sits inside a larger sheet with crop marks) and of pages with a /Rotate.
+ * pdf.js must be opened with `fontExtraProperties: true`, or the real font names (which tell
+ * headings, body text and stat blocks apart) are not available.
  *
  * `ops` is pdf.js's OPS table. It is passed in so the same code runs with the browser build in the
  * extension and the legacy build in Node.
@@ -15,6 +18,8 @@ export async function extractPage(page: PDFPageProxy, ops: Record<string, number
   const viewport = page.getViewport({ scale: 1 })
   const width = viewport.width
   const height = viewport.height
+  // User space (the PDF's own coordinates) to the shown page, top-down.
+  const toPage = viewport.transform as Matrix
   const operators = await page.getOperatorList()
   const content = await page.getTextContent()
 
@@ -36,15 +41,17 @@ export async function extractPage(page: PDFPageProxy, ops: Record<string, number
   const text: PdfText[] = []
   for (const item of content.items) {
     if (!('str' in item) || item.str === '') continue
-    const [a, b, c, d, e, f] = item.transform as number[]
-    const size = Math.hypot(c ?? 0, d ?? 0)
-    // Rotated text (spines, decorative labels) is left out: it is never part of the reading flow.
-    if (Math.abs(b ?? 0) > 0.01 || Math.abs(c ?? 0) > 0.01 || (a ?? 0) <= 0 || size < 1) continue
+    const [a, b, c, d, e, f] = multiply(toPage, item.transform as Matrix)
+    const size = Math.hypot(c, d)
+    // Text that is not upright as shown (spines, decorative labels) is left out: it is never part
+    // of the reading flow. Upright text has a positive a and, as the page's y runs downwards, a
+    // negative d.
+    if (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0 || d >= 0 || size < 1) continue
     const font = fontName(item.fontName)
     text.push({
       str: item.str,
-      x: e ?? 0,
-      y: height - (f ?? 0),
+      x: e,
+      y: f,
       w: item.width,
       size,
       font,
@@ -53,19 +60,24 @@ export async function extractPage(page: PDFPageProxy, ops: Record<string, number
     })
   }
 
-  const { images, shapes } = placeDrawing(operators, ops, height)
-  return { number: page.pageNumber, width, height, text, shapes, images }
+  const { images, shapes, hiddenText } = placeDrawing(operators, ops, toPage)
+  return { number: page.pageNumber, width, height, text, shapes, images, ...(hiddenText ? { hiddenText } : {}) }
 }
 
-/** Walks the drawing operators, tracking the transform, to place images and filled shapes. */
-function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, ops: Record<string, number>, height: number): { images: PdfImage[]; shapes: PdfShape[] } {
+/**
+ * Walks the drawing operators, tracking the transform, to place images and filled shapes in page
+ * coordinates. Also notes text drawn invisibly (rendering mode 3 or 7): the recognised text layer
+ * that OCR puts over a scanned page.
+ */
+function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, ops: Record<string, number>, toPage: Matrix): { images: PdfImage[]; shapes: PdfShape[]; hiddenText: boolean } {
   const names = new Map(Object.entries(ops).map(([k, v]) => [v, k]))
   const images: PdfImage[] = []
   const shapes: PdfShape[] = []
-  let ctm: Matrix = [1, 0, 0, 1, 0, 0]
+  let ctm: Matrix = toPage
   const stack: Matrix[] = []
   let fill = '#000000'
   const fillStack: string[] = []
+  let hiddenText = false
   operators.fnArray.forEach((fn, i) => {
     const args = operators.argsArray[i] as unknown[]
     switch (names.get(fn)) {
@@ -81,9 +93,10 @@ function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, op
       case 'paintFormXObjectEnd': ctm = stack.pop() ?? ctm; fill = fillStack.pop() ?? fill; break
       case 'setFillRGBColor': fill = String(args[0]); break
       case 'setFillGray': case 'setFillCMYKColor': case 'setFillColorN': fill = 'other'; break
+      case 'setTextRenderingMode': if (args[0] === 3 || args[0] === 7) hiddenText = true; break
       case 'paintImageXObject': case 'paintImageXObjectRepeat': {
         const [id, pw, ph] = args as [string, number, number]
-        const box = toTopDown(transformBox(ctm, [0, 0, 1, 1]), height)
+        const box = transformBox(ctm, [0, 0, 1, 1])
         images.push({ id, width: pw, height: ph, ...box })
         break
       }
@@ -92,7 +105,7 @@ function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, op
         const [op, , minMax] = args as [number, unknown, number[] | null]
         const paint = names.get(op)
         if (!minMax || !paint || !/fill/i.test(paint)) break
-        const box = toTopDown(transformBox(ctm, minMax as [number, number, number, number]), height)
+        const box = transformBox(ctm, minMax as [number, number, number, number])
         if (box.x1 - box.x0 < 1 || box.y1 - box.y0 < 1) break
         shapes.push({ ...box, fill })
         break
@@ -100,7 +113,7 @@ function placeDrawing(operators: { fnArray: number[]; argsArray: unknown[] }, op
     }
   })
 
-  return { images, shapes }
+  return { images, shapes, hiddenText }
 }
 
 type Matrix = [number, number, number, number, number, number]
@@ -123,10 +136,6 @@ function transformBox(m: Matrix, [x0, y0, x1, y1]: [number, number, number, numb
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }
 }
 
-function toTopDown(box: { x0: number; y0: number; x1: number; y1: number }, height: number) {
-  return { x0: box.x0, x1: box.x1, y0: height - box.y1, y1: height - box.y0 }
-}
-
 /** An image's pixels as pdf.js decoded them: an ImageBitmap in browsers, raw bytes in Node. */
 export interface PdfImageData {
   width: number
@@ -143,9 +152,9 @@ export interface PdfImageData {
  */
 export async function pageImage(page: PDFPageProxy, ops: Record<string, number>, image: Box): Promise<PdfImageData | null> {
   const operators = await page.getOperatorList()
-  const height = page.getViewport({ scale: 1 }).height
+  const toPage = page.getViewport({ scale: 1 }).transform as Matrix
   const near = (a: number, b: number) => Math.abs(a - b) < 1
-  const found = placeDrawing(operators, ops, height).images.filter((i) => near(i.x0, image.x0) && near(i.y0, image.y0) && near(i.x1, image.x1) && near(i.y1, image.y1)).at(-1)
+  const found = placeDrawing(operators, ops, toPage).images.filter((i) => near(i.x0, image.x0) && near(i.y0, image.y0) && near(i.x1, image.x1) && near(i.y1, image.y1)).at(-1)
   if (!found) return null
   // Images shared between pages live in the document's common objects.
   const objs = found.id.startsWith('g_') ? page.commonObjs : page.objs

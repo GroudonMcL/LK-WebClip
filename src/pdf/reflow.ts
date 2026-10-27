@@ -8,12 +8,13 @@ import type { Box, PageContent, PdfImage, PdfText } from './types.js'
  * The rules, in order:
  *   1. Text runs on the same baseline join into lines; a wide gap splits a line into segments
  *      (separate columns, or table cells).
- *   2. Each page's columns are found from where text never sits: across the whole document first,
- *      then on the page itself when it is laid out differently (three columns, a sidebar). A line
- *      that crosses every gutter spans the page (a title, a wide table); the lines between two
- *      spanning lines are read column by column, left to right. A sidebar (a column much narrower
- *      than the others) is read after the rest of the page. `ReflowOptions.layouts` sets a page's
- *      layout by hand.
+ *   2. Each page's columns are found from where text never sits: across the pages on its side of
+ *      the spine first (books mirror their margins), then the whole book, then the page itself when
+ *      it is laid out differently (three columns, a sidebar). A line that crosses every gutter spans
+ *      the page (a title, a wide table); the lines between two spanning lines are read column by
+ *      column, left to right. A sidebar (a column much narrower than the others) is read after the
+ *      rest of the page. `ReflowOptions.layout` sets the book's columns, divider and margins by
+ *      hand, and `ReflowOptions.layouts` one page's layout.
  *   3. Text styles (font + size) are ranked: the most used one is body text, larger distinct styles
  *      become heading levels. `ReflowOptions.styles` corrects any that come out wrong.
  *   4. Lines join into paragraphs unless something says a new one starts: a gap, an indent, a short
@@ -67,12 +68,27 @@ export interface TextStyle {
 export interface ReflowOptions {
   /** Corrections to the detected roles, by style key. */
   styles?: Record<string, Role>
-  /** Layouts set by hand, by page number. */
+  /** The whole book's layout, where finding it automatically goes wrong. */
+  layout?: Layout
+  /** Layouts set by hand for single pages, by page number. They win over `layout`. */
   layouts?: Record<number, PageLayout>
   /** Areas marked by hand. Where they overlap, the one marked last wins. */
   regions?: Region[]
   /** Scan mode, for OCR text. Left out, it is on when the text looks like OCR (`looksScanned`). */
   scan?: boolean
+}
+
+/** Manual help with the whole book's layout. Every part is optional; what is left out is found automatically. */
+export interface Layout {
+  /** 'auto' finds the columns; 1 reads every page as one column; 2 always splits at the divider. */
+  columns?: 'auto' | 1 | 2
+  /**
+   * Where the two columns divide, as a fraction of the page width, for odd and for even pages
+   * (books mirror their margins, so the two sides differ). One value set applies to both.
+   */
+  divider?: { odd?: number; even?: number }
+  /** Edges of every page to leave out, as fractions of its width and height: running heads, page numbers, chapter tabs. */
+  margins?: { top?: number; bottom?: number; left?: number; right?: number }
 }
 
 export interface Run {
@@ -97,8 +113,12 @@ export interface ReflowResult {
   blocks: ReflowBlock[]
   styles: TextStyle[]
   layouts: PageLayoutInfo[]
+  /** Where each page's columns divide (the middle of each gutter, x in points), for pages read in columns. */
+  dividers: Record<number, number[]>
   /** Whether scan mode was used. */
   scan: boolean
+  /** Pages carrying invisible text: a scan with recognised text over it, whose layout is only approximate. */
+  scanned: number[]
 }
 
 interface Segment extends Box {
@@ -114,6 +134,8 @@ interface Segment extends Box {
   leader?: boolean
   /** Starts with a joined drop cap, so its font differs from the lines after it. */
   dropCap?: boolean
+  /** Printed on a picture: its name. Never part of a paragraph. */
+  caption?: boolean
 }
 
 type Line =
@@ -151,13 +173,17 @@ const BULLET = /^[•●▪◦■‣∙·]\s*/
 const SMALL_CAPS = /SC\d*$|SmallCaps|-SC-/i
 const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'with'])
 const TERMINAL = /[.!?:”"’)\]]$/
+/** Fonts that draw rules, ornaments and symbols rather than words. */
+const SYMBOL_FONT = /lines|ornament|dingbat|symbol|wingding|webding|zapf|\bpi\b|pi$/i
 
 export function reflow(pages: PageContent[], options: ReflowOptions = {}): ReflowResult {
   const scan = options.scan ?? looksScanned(pages)
   const tol = tolerance(scan)
+  const book = options.layout ?? {}
+  pages = pages.map((p) => cropPage(p, book.margins))
   // Hand-marked areas come out first: skipped text goes, the rest is read on its own.
   const split = pages.map((p) => splitRegions(p, (options.regions ?? []).filter((r) => r.page === p.number)))
-  const segsByPage = split.map((s) => toSegments(s.page, tol))
+  const segsByPage = split.map((s) => toSegments(dropMarginalia(s.page, tol), tol))
   const regionSegs = split.map((s) => s.regions.map(({ region, page }) => ({ region, segs: toSegments(page, tol, region.kind === 'table' ? 0.4 : 0.9) })))
   const allSegs = [...segsByPage.flat(), ...regionSegs.flat().flatMap((r) => r.segs)]
   const bodySize = (scan
@@ -166,17 +192,24 @@ export function reflow(pages: PageContent[], options: ReflowOptions = {}): Reflo
   for (const segs of segsByPage) joinDropCaps(segs, bodySize)
   const styles = detectStyles(allSegs, bodySize, options.styles ?? {}, scan)
   const roles = new Map(styles.map((s) => [s.key, s.role]))
-  const gutters = findGutters(pages, segsByPage)
+  // Over many pages, titles, wide tables and contents leaders all cross the gutter, so it only has
+  // to be a clear dip there. Pages on one side of the spine share their gutters.
+  const onSide = (parity: number) => segsByPage.filter((_, i) => (pages[i]?.number ?? 0) % 2 === parity).flat()
+  const sideGutters = [findGutters(pages, onSide(0)), findGutters(pages, onSide(1))]
+  const wholeGutters = findGutters(pages, segsByPage.flat())
   const keepImages = new Set(pickImages(split.map((s) => s.page)).map((i) => `${i.page}:${i.id}`))
 
   const lines: Line[] = []
   const columnEdges = new Map<string, { left: number; right: number }>()
   const layouts: PageLayoutInfo[] = []
+  const dividers: Record<number, number[]> = {}
   const pageLayouts = pages.map((page, i) => {
     const chosen = options.layouts?.[page.number] ?? 'auto'
-    const layout = pageLayout(page, segsByPage[i] ?? [], gutters, chosen, bodySize)
-    layouts.push({ page: page.number, columns: layout.gutters.length + 1, sidebar: layout.sidebars.size > 0, layout: chosen })
-    return layout
+    const side = sideGutters[page.number % 2] ?? []
+    const columns = pageLayout(page, segsByPage[i] ?? [], side.length ? side : wholeGutters, chosen, bodySize, book)
+    layouts.push({ page: page.number, columns: columns.gutters.length + 1, sidebar: columns.sidebars.size > 0, layout: chosen })
+    if (columns.gutters.length) dividers[page.number] = columns.gutters.map((g) => (g.left + g.right) / 2)
+    return columns
   })
   const pageLines = split.map(({ page }, i) => {
     const images = page.images.filter((img) => keepImages.has(`${page.number}:${img.id}`))
@@ -206,15 +239,52 @@ export function reflow(pages: PageContent[], options: ReflowOptions = {}): Reflo
 
   const words = wordSet(allSegs)
   const blocks = buildBlocks(lines, roles, columnEdges, words, pages, tol)
-  return { blocks: groupStatBlocks(blocks), styles, layouts, scan }
+  return { blocks: groupStatBlocks(blocks), styles, layouts, dividers, scan, scanned: pages.filter((p) => p.hiddenText).map((p) => p.number) }
+}
+
+/** Leaves out the text and images whose middle falls in the margins the layout says to ignore. */
+function cropPage(page: PageContent, margins: Layout['margins']): PageContent {
+  if (!margins || !Object.values(margins).some((m) => m)) return page
+  const x0 = (margins.left ?? 0) * page.width
+  const x1 = page.width - (margins.right ?? 0) * page.width
+  const y0 = (margins.top ?? 0) * page.height
+  const y1 = page.height - (margins.bottom ?? 0) * page.height
+  const inside = (cx: number, cy: number) => cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1
+  return {
+    ...page,
+    text: page.text.filter((t) => inside(t.x + t.w / 2, t.y - t.size * 0.3)),
+    images: page.images.filter((i) => inside((i.x0 + i.x1) / 2, (i.y0 + i.y1) / 2)),
+  }
 }
 
 /**
- * Whether the text looks like an OCR layer on a scanned book: set in an OCR program's invisible
- * font, or with neighbouring words on the same line at slightly different heights and sizes, which
+ * Single letters outside the text area are decoration: a chapter name set down the page's edge one
+ * letter at a time, which would otherwise end up as a cell beside every line of text, or joined
+ * on to a heading set in a big face. The text area's edges are where the lines of text start and
+ * end, so they are not thrown off by a letter that already sits next to a heading.
+ */
+function dropMarginalia(page: PageContent, tol: Tolerance): PageContent {
+  const lines = toSegments(page, tol).filter((s) => segText(s).trim().length >= 30)
+  if (lines.length < 3) return page
+  const edge = (xs: number[], pick: (a: number, b: number) => number) => {
+    const counts = new Map<number, number>()
+    for (const x of xs) counts.set(Math.round(x), (counts.get(Math.round(x)) ?? 0) + 1)
+    const shared = [...counts].filter(([, n]) => n >= 3).map(([x]) => x)
+    return (shared.length ? shared : [...counts.keys()]).reduce((a, b) => pick(a, b))
+  }
+  const left = edge(lines.map((s) => s.x0), Math.min)
+  const right = edge(lines.map((s) => s.x1), Math.max)
+  const text = page.text.filter((t) => !(t.str.trim().length === 1 && (t.x + t.w / 2 < left - 2 || t.x + t.w / 2 > right + 2)))
+  return text.length === page.text.length ? page : { ...page, text }
+}
+
+/**
+ * Whether the text looks like an OCR layer on a scanned book: drawn invisibly over most pages, set
+ * in an OCR program's font, or with neighbouring words on the same line at slightly different heights and sizes, which
  * typeset text never is.
  */
 export function looksScanned(pages: PageContent[]): boolean {
+  if (pages.length && pages.filter((p) => p.hiddenText).length >= pages.length / 2) return true
   let chars = 0
   let ocr = 0
   let pairs = 0
@@ -262,9 +332,12 @@ function splitRegions(page: PageContent, regions: Region[]): { page: PageContent
 
 /** The images worth showing: not page backgrounds, not decorations repeated on many pages, not specks. */
 export function pickImages(pages: PageContent[]): (PdfImage & { page: number })[] {
+  // pdf.js names a page's own images afresh on every page, so a decoration that is drawn again on
+  // each page (a chapter tab, a border) is also known by its size and place.
+  const keys = (img: PdfImage) => [`${img.width}x${img.height}:${img.id}`, `${img.width}x${img.height}@${Math.round(img.x0)},${Math.round(img.y0)}`]
   const seen = new Map<string, number>()
-  for (const p of pages) for (const id of new Set(p.images.map((i) => `${i.width}x${i.height}:${i.id}`))) seen.set(id, (seen.get(id) ?? 0) + 1)
-  const repeated = (img: PdfImage) => pages.length >= 3 && (seen.get(`${img.width}x${img.height}:${img.id}`) ?? 0) >= Math.max(3, pages.length / 2)
+  for (const p of pages) for (const key of new Set(p.images.flatMap(keys))) seen.set(key, (seen.get(key) ?? 0) + 1)
+  const repeated = (img: PdfImage) => pages.length >= 3 && keys(img).some((key) => (seen.get(key) ?? 0) >= Math.max(3, pages.length / 2))
   const out: (PdfImage & { page: number })[] = []
   for (const p of pages) {
     const pageArea = p.width * p.height
@@ -275,7 +348,7 @@ export function pickImages(pages: PageContent[]): (PdfImage & { page: number })[
       if (w * h > pageArea * 0.8) continue
       if (repeated(img)) continue
       // Text printed on top makes it a background: a panel behind a table, a border round a page.
-      if (p.text.filter((t) => t.x > img.x0 && t.x < img.x1 && t.y > img.y0 && t.y < img.y1).length >= 8) continue
+      if (textAcross(p, img) >= 8) continue
       if (out.some((o) => o.page === p.number && o.id === img.id)) continue
       // Layout programs often draw an image twice in one place (a knockout layer under the art):
       // the last one drawn is what shows.
@@ -285,6 +358,16 @@ export function pickImages(pages: PageContent[]): (PdfImage & { page: number })[
     }
   }
   return out
+}
+
+/**
+ * How many runs of text sit across the middle of a box. Text on a panel is laid out across it;
+ * text wrapped round a picture only intrudes at the edges of the picture's box (which holds the
+ * clear space round the art), and a caption is one run.
+ */
+function textAcross(page: PageContent, box: Box): number {
+  const quarter = (box.x1 - box.x0) / 4
+  return page.text.filter((t) => t.x + t.w / 2 > box.x0 + quarter && t.x + t.w / 2 < box.x1 - quarter && t.y > box.y0 && t.y < box.y1).length
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -335,16 +418,19 @@ function toSegments(page: PageContent, tol: Tolerance, gap = 0.9): Segment[] {
     if (pieces.length > 1 && pieces.some((s) => /^[.\s·…]+$|(\.\s*){4,}/.test(s.items.map((i) => i.str).join('')))) segs.push({ ...makeSegment(page.number, pieces.flatMap((s) => s.items), tol.scan), leader: true })
     else segs.push(...pieces)
   }
-  // Page numbers and running footers are not part of the text.
-  return segs.filter((s) => !(/^\d{1,4}$/.test(segText(s)) && (s.y0 > page.height * 0.92 || s.y1 < page.height * 0.06)))
+  // Page numbers are not part of the text: a number on its own line near the top or bottom edge.
+  const alone = (s: Segment) => !segs.some((o) => o !== s && Math.abs(o.baseline - s.baseline) < s.size)
+  return segs.filter((s) => !(/^\d{1,4}$/.test(segText(s).trim()) && (s.y0 > page.height * 0.85 || s.y1 < page.height * 0.08) && alone(s)))
 }
 
 /**
  * A segment's style is its biggest run's font and size. In scan mode every word has its own size
- * and the font says nothing, so the style is the line's typical size alone.
+ * and the font says nothing, so the style is the line's typical size alone (except for ornaments).
  */
 function makeSegment(page: number, items: PdfText[], scan = false): Segment {
   const biggest = items.reduce((a, b) => (b.size > a.size ? b : a))
+  // Ornaments keep their font even in scan mode, so they can still be left out.
+  if (scan && items.every((i) => SYMBOL_FONT.test(i.font))) scan = false
   const size = scan ? median(items.map((i) => i.size)) : biggest.size
   const styleSize = scan ? Math.round(size) : round(size)
   return {
@@ -431,23 +517,25 @@ function joinDropCaps(segs: Segment[], bodySize: number) {
 interface Gutter { left: number; right: number }
 
 /** A page's columns: the gutters between them, and which columns (by number) are sidebars. */
-interface Layout { gutters: Gutter[]; sidebars: Set<number> }
+interface Columns { gutters: Gutter[]; sidebars: Set<number> }
 
 const crossesGutter = (b: Box, g: Gutter) => b.x0 < g.left - 2 && b.x1 > g.right + 2
 
 /**
- * The vertical strips that text (almost) never crosses, across the whole document: the gutter of a
- * two-column book, both gutters of a three-column one, or the edge of a sidebar on every page.
+ * The vertical strips that the given text (almost) never crosses: covered by at most a third of the
+ * typical number of lines. Across many pages, that is the gutter of a two-column book, both gutters
+ * of a three-column one, or the edge of a sidebar on every page.
  */
-function findGutters(pages: PageContent[], segsByPage: Segment[][]): Gutter[] {
+function findGutters(pages: PageContent[], segs: Segment[]): Gutter[] {
   const width = Math.round(Math.max(...pages.map((p) => p.width), 0))
-  if (!width) return []
+  if (!width || segs.length < 8) return []
   const cover = new Array<number>(width + 1).fill(0)
-  for (const s of segsByPage.flat()) for (let x = Math.max(0, Math.floor(s.x0)); x <= Math.min(width, Math.ceil(s.x1)); x++) cover[x]!++
+  for (const s of segs) for (let x = Math.max(0, Math.floor(s.x0)); x <= Math.min(width, Math.ceil(s.x1)); x++) cover[x]!++
   const mid0 = Math.round(width * 0.3)
   const mid1 = Math.round(width * 0.7)
   const typical = [...cover.slice(mid0, mid1)].sort((a, b) => a - b)[Math.floor((mid1 - mid0) * 0.75)] ?? 0
-  const limit = typical * 0.2
+  if (typical < 4) return []
+  const limit = typical * 0.35
   // Only between the outermost text: the margins are empty too.
   const first = cover.findIndex((c) => c > limit)
   let last = cover.length - 1
@@ -478,16 +566,24 @@ function findGutters(pages: PageContent[], segsByPage: Segment[][]): Gutter[] {
 }
 
 /**
- * How one page is laid out. The document's gutters are used when the page keeps to them; a page laid
- * out differently (three columns in a two-column book, a sidebar) is measured on its own.
+ * How one page is laid out. A layout set for the page wins, then the book's (one column, or a
+ * divider set by hand). Otherwise the book's gutters are used when the page keeps to them, and a
+ * page laid out differently (three columns in a two-column book, a sidebar) is measured on its own.
  */
-function pageLayout(page: PageContent, segs: Segment[], doc: Gutter[], chosen: PageLayout, size: number): Layout {
-  if (chosen === 'one') return { gutters: [], sidebars: new Set() }
+function pageLayout(page: PageContent, segs: Segment[], doc: Gutter[], chosen: PageLayout, size: number, book: Layout): Columns {
+  const none: Columns = { gutters: [], sidebars: new Set() }
+  if (chosen === 'one' || (chosen === 'auto' && book.columns === 1)) return none
   if (chosen !== 'auto') {
     const gutters = forcedGutters(segs, chosen === 'three' ? 3 : 2, chosen === 'sidebar')
     const widths = columnsOf(segs, gutters).map((c) => c.x1 - c.x0)
     const narrowest = widths.indexOf(Math.min(...widths))
     return { gutters, sidebars: chosen === 'sidebar' && gutters.length ? new Set([narrowest]) : new Set() }
+  }
+  const divider = book.divider?.[page.number % 2 ? 'odd' : 'even'] ?? book.divider?.odd ?? book.divider?.even
+  if (divider !== undefined) {
+    // Split where the book says, on pages with text in both columns.
+    const gutter = { left: divider * page.width - 6, right: divider * page.width + 6 }
+    return { gutters: keepGutters(segs, [gutter], () => 'lines'), sidebars: new Set() }
   }
   // Gutters away from the middle (a sidebar's) must also have text-like columns beside them.
   const unusual = (g: Gutter) => g.left < page.width * 0.3 || g.right > page.width * 0.7
@@ -495,6 +591,7 @@ function pageLayout(page: PageContent, segs: Segment[], doc: Gutter[], chosen: P
   const own = pageGutters(segs, size)
   const crossed = segs.filter((s) => fromDoc.some((g) => crossesGutter(s, g))).length > 0.2 * segs.length
   const gutters = own.length > fromDoc.length && (crossed || !fromDoc.length) ? own : fromDoc
+  if (!gutters.length && book.columns === 2 && segs.length) return { gutters: [{ left: page.width / 2 - 3, right: page.width / 2 + 3 }], sidebars: new Set() }
   return { gutters, sidebars: sidebarsOf(segs, gutters) }
 }
 
@@ -599,16 +696,31 @@ function sidebarsOf(segs: Segment[], gutters: Gutter[]): Set<number> {
   return new Set(widths.flatMap((w, i) => (w < 0.6 * widest ? [i] : [])))
 }
 
+/**
+ * A big heading's words are set far enough apart to be joined across the gutter with the line in
+ * the other column. A segment crossing the gutter is split at a gap between its runs that sits
+ * over the gutter; a line with no such gap (a title, a wide table's cell) does span the page.
+ */
+function splitAtGutter(seg: Segment, gutter: Gutter, scan: boolean): Segment[] {
+  if (!crossesGutter(seg, gutter)) return [seg]
+  const at = seg.items.findIndex((item, i) => {
+    const prev = seg.items[i - 1]
+    return !!prev && prev.x + prev.w <= gutter.right + 2 && item.x >= gutter.left - 2 && item.x - (prev.x + prev.w) > 0.25 * item.size
+  })
+  if (at < 1) return [seg]
+  return [makeSegment(seg.page, seg.items.slice(0, at), scan), makeSegment(seg.page, seg.items.slice(at), scan)]
+}
+
 function orderPage(
   page: PageContent,
   segs: Segment[],
   images: PdfImage[],
   regions: { region: Region; segs: Segment[] }[],
-  layout: Layout,
+  columns: Columns,
   roles: Map<string, Role>,
   tol: Tolerance,
 ): Line[] {
-  const { gutters, sidebars } = layout
+  const { gutters, sidebars } = columns
   const isHeading = (l: Line) => l.kind === 'text' && l.segs.length === 1 && !['body', 'ignore'].includes(roles.get(l.segs[0]!.style) ?? 'body')
   const crosses = (b: Box) => gutters.some((g) => crossesGutter(b, g))
   const crossesAll = (b: Box) => gutters.length > 0 && gutters.every((g) => crossesGutter(b, g))
@@ -619,8 +731,22 @@ function orderPage(
     const i = mids.findIndex((m) => x < m)
     return i < 0 ? mids.length : i
   }
+  for (const g of gutters) segs = segs.flatMap((s) => splitAtGutter(s, g, tol.scan))
 
-  // Rows of segments on the same baseline.
+  // A caption printed on a picture (its name, under the art) is a line of its own, not a cell in
+  // the rows of text wrapped round the picture, which it would otherwise turn into a table.
+  const art = page.images.filter((img) => img.x1 - img.x0 >= 36 && img.y1 - img.y0 >= 36 && (img.x1 - img.x0) * (img.y1 - img.y0) < page.width * page.height * 0.8 && textAcross(page, img) < 8)
+  const onArt = (s: Segment) => art.some((img) => (s.x0 + s.x1) / 2 > img.x0 && (s.x0 + s.x1) / 2 < img.x1 && s.baseline > img.y0 && s.baseline < img.y1)
+  const captions: Segment[] = segs.filter(onArt).map((s) => ({ ...s, caption: true }))
+  segs = segs.filter((s) => !onArt(s))
+  /** Lines of text either side of a picture: a gap in the row holds the picture. */
+  const wrapsArt = (row: Segment[]) => art.some((img) => {
+    const cx = (img.x0 + img.x1) / 2
+    const across = [...row].sort((a, b) => a.x0 - b.x0)
+    return row[0]!.baseline > img.y0 && row[0]!.baseline < img.y1 && across.some((s, i) => { const next = across[i + 1]; return !!next && s.x1 < cx && next.x0 > cx })
+  })
+
+  // Rows of segments on the same baseline; each caption is a row of its own.
   const rows: Segment[][] = []
   for (const s of [...segs].sort((a, b) => a.baseline - b.baseline || a.x0 - b.x0)) {
     const row = rows.at(-1)
@@ -628,6 +754,7 @@ function orderPage(
     if (row && ref && Math.abs(s.baseline - ref.baseline) <= tol.line * Math.min(s.size, ref.size)) row.push(s)
     else rows.push([s])
   }
+  rows.push(...captions.map((c) => [c]))
 
   const textLine = (group: Segment[], col: Column): Line => ({
     kind: 'text', page: page.number, segs: group.sort((a, b) => a.x0 - b.x0), col, ...(sidebars.has(col) ? { side: true } : {}),
@@ -652,20 +779,33 @@ function orderPage(
   // A row with cells on both sides of a gutter, next to a wide table row, belongs to that table.
   const wide = rows.map((row) => row.some(crossesAll))
   const tableRow = (i: number) => wide[i] && (rows[i]?.length ?? 0) >= 2
+  const columnWidth = Math.min(...columnsOf(segs.length ? segs : [{ x0: 0, x1: page.width } as Segment], gutters).filter((_, i) => !sidebars.has(i)).map((c) => c.x1 - c.x0))
+  /** As long as a line of text: a column's line, not a table's cell. */
+  const long = (s: Segment) => s.x1 - s.x0 > 0.65 * columnWidth
   // Rows with a wide gap across a gutter, one under another, are one table (or a contents list
   // whose dot leaders are drawn as lines): "Credits ........ 3".
-  const gapped = rows.map((row) => gutters.some((g) => row.some((l) => l.x1 < g.left - page.width * 0.1) && row.some((r) => r.x0 > g.right + page.width * 0.1) && row.every((s) => s.x1 < g.left || s.x0 > g.right)))
+  const gapped = rows.map((row) => !row.some(long) && !wrapsArt(row) && gutters.some((g) => row.some((l) => l.x1 < g.left - page.width * 0.1) && row.some((r) => r.x0 > g.right + page.width * 0.1) && row.every((s) => s.x1 < g.left || s.x0 > g.right)))
   gapped.forEach((g, i) => {
     const near = (j: number) => gapped[j] && Math.abs(rows[j]![0]!.baseline - rows[i]![0]!.baseline) < 3 * rows[i]![0]!.size
     if (g && (near(i - 1) || near(i + 1))) wide[i] = true
   })
-  rows.forEach((row, i) => {
-    if (wide[i] || row.length < 2 || !mids.some((mid) => row.some((s) => s.x1 < mid) && row.some((s) => s.x0 > mid))) return
-    const near = (j: number) => tableRow(j) && Math.abs(rows[j]![0]!.baseline - row[0]!.baseline) < 2.5 * row[0]!.size
-    if (near(i - 1) || near(i + 1)) wide[i] = true
-  })
+  // A row of cells under (or over) a wide table row belongs to the table: cells on both sides of a
+  // gutter, or cells (a header's first line) that each sit over a cell of the table row. Not when
+  // one of its pieces is as long as a line of text: that is a line from each column, beside the
+  // table by chance. Rows join a table from below and from above, so the pass runs until nothing
+  // changes.
+  for (let changed = true; changed;) {
+    changed = false
+    rows.forEach((row, i) => {
+      if (wide[i] || row.length < 2 || row.some(long) || wrapsArt(row)) return
+      const bothSides = mids.some((mid) => row.some((s) => s.x1 < mid) && row.some((s) => s.x0 > mid))
+      const near = (j: number) => tableRow(j) && Math.abs(rows[j]![0]!.baseline - row[0]!.baseline) < 2.5 * row[0]!.size &&
+        (bothSides || row.every((s) => rows[j]!.some((cell) => overlap(cell, s) > 0)))
+      if (near(i - 1) || near(i + 1)) wide[i] = changed = true
+    })
+  }
   for (const [i, row] of rows.entries()) {
-    if (wide[i]) spanning.push(textLine(row, SPAN))
+    if (wide[i] && !captions.includes(row[0]!)) spanning.push(textLine(row, SPAN))
     else {
       const byCol = new Map<number, Segment[]>()
       for (const s of row) byCol.set(colOf(s), [...(byCol.get(colOf(s)) ?? []), s])
@@ -687,14 +827,19 @@ function orderPage(
     const to = sep ? sep.y0 + 0.5 : Infinity
     const inBand = (l: Line) => l.y0 >= from && l.y0 < to
     const band = main.map((c) => cols[c]!.filter(inBand).sort((a, b) => a.y0 - b.y0))
-    // A heading that sits below the last column, just above a spanning line, introduces that line.
+    // A heading (or a table's title, set in another style) that sits below the last column, just
+    // above a spanning line, introduces that line.
     const tail: Line[] = []
     const lastCol = band.at(-1) ?? []
+    const style = (l: Line | undefined) => (l?.kind === 'text' ? l.segs[0]?.style : undefined)
     if (sep && lastCol.length && band.length > 1) {
       const bottom = Math.max(...lastCol.map((l) => l.y1))
       band.slice(0, -1).forEach((ls, c) => {
-        const below = ls.filter((l) => l.y0 > bottom + 2)
-        if (below[0] && isHeading(below[0])) {
+        const below = ls.filter((l) => l.y0 > bottom - 1)
+        const first = below[0]
+        const above = first && ls[ls.indexOf(first) - 1]
+        const introduces = !!first && (isHeading(first) || (above !== undefined && style(first) !== style(above))) && sep.y0 - Math.max(...below.map((l) => l.y1)) < 2 * (first.kind === 'text' ? first.size : 12)
+        if (introduces) {
           tail.push(...below)
           band[c] = ls.filter((l) => !below.includes(l))
         }
@@ -751,7 +896,7 @@ function detectStyles(segs: Segment[], bodySize: number, overrides: Record<strin
   }
 
   return [...stats].map(([key, st]) => {
-    const auto: Role = candidate(st) ? levelFor(st.size) : 'body'
+    const auto: Role = SYMBOL_FONT.test(st.font) ? 'ignore' : candidate(st) ? levelFor(st.size) : 'body'
     return { key, font: st.font, size: st.size, chars: st.chars, example: st.example, role: overrides[key] ?? auto, auto: !(key in overrides) }
   }).sort((a, b) => b.size - a.size || b.chars - a.chars)
 }
@@ -890,7 +1035,7 @@ function buildBlocks(
 function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Line, { kind: 'text' }>, seg: Segment, runs: Run[], edges: Map<string, { left: number; right: number }>, tol: Tolerance): boolean {
   const prev = open.last
   if (prev.kind !== 'text') return false
-  if (seg.leader || prev.segs.some((s) => s.leader)) return false
+  if (seg.leader || seg.caption || prev.segs.some((s) => s.leader || s.caption)) return false
   // Main text never runs on into a sidebar, or out of one.
   if (!!prev.side !== !!line.side) return false
   // The line after a drop cap's first line changes font (small caps, then the body face).
@@ -916,8 +1061,12 @@ function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Lin
   if (open.list) return Math.abs(offset - open.offset) <= align || (afterDropCap ?? false)
   const prevEdge = edges.get(`${prev.page}:${prev.col}`)
   const centered = (l: Box) => !!prevEdge && Math.abs((l.x0 + l.x1) / 2 - (prevEdge.left + prevEdge.right) / 2) < 4 && l.x0 - prevEdge.left > seg.size
-  if (line.x0 - prev.x0 > tol.indent * seg.size && !(centered(line) && centered(prev))) return false
   const short = !!prevEdge && prev.x1 < prevEdge.right - 3 * seg.size
+  // A hanging indent ("Advancement: 18–19 HD (Large); …" with its later lines set in): the first
+  // line fills its column and stops mid-sentence, and the next starts a little way in.
+  const full = !!prevEdge && prev.x1 - prevEdge.left >= 0.8 * (prevEdge.right - prevEdge.left)
+  const hanging = open.lines === 1 && full && !ended && line.x0 - prev.x0 <= 3 * seg.size
+  if (line.x0 - prev.x0 > tol.indent * seg.size && !(centered(line) && centered(prev)) && !hanging) return false
   if (short && (ended || startsBold)) return false
   return true
 }
