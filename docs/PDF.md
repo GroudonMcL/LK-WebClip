@@ -32,9 +32,8 @@ What it handles, tested against a 21-page DMsGuild adventure:
 
 Known gaps:
 
-- A paragraph interrupted by a full-width block (it ends in one column, a wide table follows, and it carries on next page) is split in two. The same happens to a paragraph that carries on to the next page past a sidebar.
+- A paragraph cut off by a full-width block carries on after it only when it stopped mid-sentence and goes on in lower case (0.9.0); one that goes on with a name or "I" stays split.
 - Centred text (letters, credits) sometimes joins or splits lines oddly. Marking it **Read as one block** fixes it.
-- Text that wraps round an illustration is read as short lines, so a paragraph beside a picture splits where a line ends with a full stop.
 - Every publisher's fonts differ, so other books may need style corrections.
 
 ## The reader (done, 0.6.0)
@@ -98,20 +97,31 @@ What the reflow can rely on depends on how the PDF was made:
 | Scanned without OCR | Nothing | Nothing to reflow | OCR would be needed (Tesseract in the browser is possible but slow and large) |
 | Image-heavy (maps, handouts) | Little text | Pictures left out as backgrounds, or panels taken for pictures | Clip the page as an image instead |
 
-Ideas, roughly in order of value:
+Ideas, roughly in order of value, and where they stand:
 
-1. **Per-page overrides.** The layout is per book; a page that differs (a one-column introduction in a two-column book, a full-page table) could carry its own: a "this page" toggle in the Layout panel.
-2. **Draw a region to read, or to skip.** Drag a rectangle on a page: *read this as one block* (a sidebar, a caption), *skip this* (an advert), *this is a table*. Regions would be stored with the layout and applied before the automatic rules, so a scrambled page could be put right in a few drags rather than by tuning rules.
-3. **Fix a page by hand, keep it.** Edit the reflowed text in place (it is HTML already) and store the edit for that page, so a clip made later uses the corrected text.
-4. **Three columns and sidebars.** Find two gutters when the text never crosses two strips; treat a boxed panel (a coloured shape with text inside, already found for quotes) as its own column.
-5. **Text wrapped round art.** Lines that stop short beside an image box continue on the next line; today they look like the short last line of a paragraph.
-6. **Scanned books.** When a page is flagged as scanned: join lines by a looser baseline tolerance, take headings from size alone (and all-capitals lines), and ignore font names. Offer "this PDF is a scan: use size-only heading detection" as one switch.
-7. **Word-processor exports.** Let a style be "body, but a heading when bold".
-8. **Search across the book**, from the contents panel's filter box.
-9. **Reading-order check.** Highlight the blocks on the page in reading order (numbered boxes) so a wrong order is seen at a glance, rather than by reading the text.
-10. **OCR fallback** for PDFs with no text layer at all, as an opt-in that runs page by page.
+1. ~~**Per-page overrides.**~~ Done in 0.8.0: the layout menu on each page marker.
+2. ~~**Draw a region to read, or to skip.**~~ Done in 0.8.0: **Mark area**.
+3. ~~**Fix a page by hand, keep it.**~~ Done in 0.8.0: **Edit text**.
+4. ~~**Three columns and sidebars.**~~ Done in 0.8.0; boxed panels read as their own unit in 0.9.0.
+5. ~~**Text wrapped round art.**~~ Done in 0.9.0.
+6. ~~**Scanned books.**~~ Done in 0.8.0 (scan mode); lines in capitals as headings in 0.9.0.
+7. ~~**Word-processor exports.**~~ Done in 0.9.0.
+8. ~~**Search across the book.**~~ Done in 0.9.0, in the Contents panel.
+9. ~~**Reading-order check.**~~ Done in 0.9.0, in the Layout panel.
+10. **OCR fallback** for PDFs with no text layer at all, as an opt-in that runs page by page. Not started: Tesseract in the browser needs its WebAssembly engine and a language model (about 15 MB for English) in the extension, or downloaded on first use, and takes seconds a page. Worth it only if image-only PDFs turn up often.
+
+## Reading fixes, search and reading order (done, 0.9.0)
+
+The rest of the ideas above, and the known gaps that could be fixed.
+
+- **Text wrapped round a picture** (`continues` in `src/pdf/reflow.ts`): a line that stops short with a kept picture beside it on the right, or starts after one on the left, counts as a full line, so a sentence ending there no longer ends the paragraph. A picture met while a paragraph is open is put after the paragraph rather than splitting it.
+- **A paragraph cut off by a table, a picture or a marked area across the page, or by a sidebar**, carries on after it: the paragraph is kept when it stopped mid-sentence, and the first line of text after the interruption (on the same side of any sidebar) joins it when it starts in lower case and lines up as a next column's line would. The paragraph keeps its place before the table. Anything else (a heading, a list, a new paragraph) lets it go.
+- **Coloured panels** (boxed text, a sidebar on a tint, a stat block on a panel) are read as a unit, like a marked area: the outermost tinted shape (not white or black, at least 80pt wide and three lines high, under 40% of the page) whose text stays inside it, holding at least two lines but not most of the page. Its text is taken out before the page's columns are found and read where the panel sits, in its own columns if it has them (two lines make a column in a panel). Its paragraphs stay boxed.
+- **Lines in capitals** are headings in scan mode (one level below the smallest found by size), when short, with a word of four letters or more and no closing comma or full stop: "THE SUNKEN TEMPLE", not "STR DEX CON".
+- **Word-processor exports:** a heading style now only takes lines set mostly in it, so marking bold body text as a heading leaves bold lead-ins ("**Note.** …") as text. Where a book has fewer than two heading sizes, a bold style in the body face and size is a heading by itself when at least three of its lines, and 60% of them, are short lines wholly in it that don't end a sentence.
+- **Search:** the Contents panel's box also searches the whole text once three letters are typed: up to 200 places, each with the words around it and its page, every match marked in the text (CSS custom highlights, so the text and what is clipped are untouched). Enter goes to the first.
+- **Reading order:** **Layout → Show the reading order on the pages** numbers each block on the pages in reading order, with an outline round each run of its lines, so a wrong order shows at a glance.
 
 ## Later
 
-- Searching the whole book.
-- Keeping a paragraph together across a full-width block or a sidebar.
+- OCR for PDFs with no text layer (above).

@@ -261,13 +261,20 @@ describe('reflow: sample PDFs read with pdf.js', () => {
     const pages = await read('layouts.pdf')
     const result = reflow(pages)
     assert.equal(result.scan, false)
-    assert.deepEqual(result.layouts.map((l) => `${l.columns}${l.sidebar ? '+sidebar' : ''}`), ['2', '2', '3', '2+sidebar', '1'])
+    assert.deepEqual(result.layouts.map((l) => `${l.columns}${l.sidebar ? '+sidebar' : ''}`), ['2', '2', '3', '2+sidebar', '1', '2'])
     const page1 = result.blocks.filter((b) => b.page === 1)
     assert.ok(page1.some((b) => /the travellers keep on walking until nightfall\.$/.test(plain(b))), 'a paragraph carries on into the next column')
     // The sidebar comes after the main text.
     const page4 = result.blocks.filter((b) => b.page === 4).map(plain)
     assert.equal(page4.indexOf('Village Notes'), page4.length - 2)
     assert.ok(result.blocks.some((b) => b.type === 'statblock' && b.name === 'Goblin Boss'))
+    // The tinted panel across both columns is read as a unit after the text above it, and the
+    // paragraph wrapped round the picture holds together.
+    const page6 = result.blocks.filter((b) => b.page === 6)
+    const rumours = page6.findIndex((b) => plain(b) === 'Rumours at the Inn')
+    assert.equal(rumours, 3)
+    assert.ok(page6.slice(4, 6).every((b) => b.type === 'paragraph' && b.boxed))
+    assert.ok(page6.some((b) => /fallen\. runs cold .* and on it goes beyond the picture into the rest of the column\./.test(plain(b))))
   })
 
   it('reads marked areas and set layouts', async () => {
@@ -428,6 +435,101 @@ describe('reflow: layout', () => {
     assert.equal(result.styles.find((s) => s.font === 'IndecisionLines')?.role, 'ignore')
     assert.deepEqual(result.blocks.map(plain), ['body text runs on body text runs on body text ends.'])
     assert.deepEqual(result.scanned, [1])
+  })
+})
+
+describe('reflow: interruptions, panels and headings', () => {
+  it('keeps a paragraph whole beside a picture it wraps round, and puts the picture after it', () => {
+    const picture = { id: 'art', width: 400, height: 300, x0: 300, y0: 95, x1: 558, y1: 176 }
+    const pages = [page(1, [
+      ...column(54, 100, ['The party comes to a', 'ruined chapel. Its doors', 'hang open and inside', 'the dust lies thick on', 'every bench and stair.', 'Nothing has walked here', 'for years.'], 236),
+      ...column(54, 184, ['Beyond the altar, a stair leads down into the dark crypt below.'], 504),
+    ], { images: [picture] })]
+    const blocks = reflow(pages).blocks
+    assert.deepEqual(blocks.map(plain), [
+      'The party comes to a ruined chapel. Its doors hang open and inside the dust lies thick on every bench and stair. Nothing has walked here for years. Beyond the altar, a stair leads down into the dark crypt below.',
+      'image',
+    ])
+  })
+
+  it('carries a paragraph on after a table that cuts it off, but not a new one', () => {
+    const row = (y: number, a: string, b: string) => [t(a, 54, y), t(b, 300, y)]
+    const pages = [page(1, [
+      ...column(54, 100, ['The goblins keep their loot in a chest', 'guarded by']),
+      ...row(130, 'd4', 'Treasure'), ...row(142, '1', 'Gold'), ...row(154, '2', 'Gems'),
+      ...column(54, 180, ['three hungry wolves.', 'A new paragraph starts here.']),
+    ])]
+    const blocks = reflow(pages).blocks
+    assert.deepEqual(blocks.map(plain), ['The goblins keep their loot in a chest guarded by three hungry wolves.', 'table', 'A new paragraph starts here.'])
+    const after = [page(1, [
+      ...column(54, 100, ['The goblins keep their loot in a chest', 'guarded by']),
+      ...row(130, 'd4', 'Treasure'), ...row(142, '1', 'Gold'),
+      ...column(54, 180, ['Three hungry wolves wait.']),
+    ])]
+    assert.deepEqual(reflow(after).blocks.map(plain), ['The goblins keep their loot in a chest guarded by', 'table', 'Three hungry wolves wait.'])
+  })
+
+  it('carries main text on to the next page past a sidebar', () => {
+    const main = (n: number, lines: string[]) => column(200, 100, lines, 358)
+    const pages = [
+      page(1, [...column(54, 100, ['Notes on the town', 'of Hommlet and its', 'people, who are', 'wary of strangers.'], 120), ...main(1, ['The road runs on past', 'the mill and the inn', 'and the old moathouse', 'until it reaches the'])]),
+      page(2, [...main(2, ['edge of the forest.', 'Here the party rests.', 'The night is quiet', 'and nothing stirs.'])]),
+    ]
+    const blocks = reflow(pages, { layouts: { 1: 'sidebar' } }).blocks
+    assert.deepEqual(blocks.map(plain), [
+      'The road runs on past the mill and the inn and the old moathouse until it reaches the edge of the forest. Here the party rests. The night is quiet and nothing stirs.',
+      'Notes on the town of Hommlet and its people, who are wary of strangers.',
+    ])
+  })
+
+  it('reads a coloured panel as a unit, in its own columns, where it sits', () => {
+    const panel = { x0: 50, y0: 200, x1: 562, y1: 250, fill: '#e8dcc0' }
+    const pages = [page(1, [
+      ...column(54, 100, ['top left one', 'top left two', 'top left three', 'top left four', 'top left end.']),
+      ...column(315, 100, ['top right one', 'top right two', 'top right three', 'top right four', 'top right end.']),
+      ...column(60, 215, ['panel left one', 'panel left two', 'panel left end.'], 230),
+      ...column(320, 215, ['panel right one', 'panel right two', 'panel right end.'], 230),
+      ...column(54, 280, ['low left one', 'low left two', 'low left three', 'low left four', 'low left end.']),
+      ...column(315, 280, ['low right one', 'low right two', 'low right three', 'low right four', 'low right end.']),
+    ], { shapes: [panel] })]
+    const blocks = reflow(pages).blocks
+    assert.deepEqual(blocks.map((b) => plain(b).split(' ').slice(0, 2).join(' ')), ['top left', 'top right', 'panel left', 'panel right', 'low left', 'low right'])
+    assert.ok(blocks.slice(2, 4).every((b) => b.type === 'paragraph' && b.boxed), 'the panel’s text is boxed')
+  })
+
+  it('takes a line in capitals as a heading in scan mode', () => {
+    const pages = [page(1, [
+      t('THE SUNKEN TEMPLE', 54, 80, { font: 'GlyphLessFont' }),
+      ...column(54, 100, ['the temple lies under', 'the lake and its doors', 'are sealed.']).map((x) => ({ ...x, font: 'GlyphLessFont' })),
+      t('STR DEX CON', 54, 160, { font: 'GlyphLessFont' }),
+    ])]
+    const result = reflow(pages)
+    assert.equal(result.scan, true)
+    assert.deepEqual(result.blocks.map((b) => b.type), ['heading', 'paragraph', 'paragraph'])
+    assert.equal(plain(result.blocks[0]!), 'THE SUNKEN TEMPLE')
+  })
+
+  it('takes lines wholly in bold body text as headings, but not bold lead-ins', () => {
+    // A word processor's export: one face, headings only bold.
+    const leadIn = (y: number, label: string, rest: string) => line(54, y, [bold(label, 0, 0), { ...t(rest, 0, 0), w: 400 }])
+    const pages = [page(1, [
+      bold('Getting Started', 54, 80), ...column(54, 100, ['Read this first and', 'then go on.'], 504),
+      ...leadIn(130, 'Note. ', 'This is a lead-in, not a heading.'),
+      bold('The Village', 54, 160), ...column(54, 180, ['The village is small.'], 504),
+      bold('The Forest', 54, 210), ...column(54, 230, ['The forest is dark.'], 504),
+      ...leadIn(250, 'Tip. ', 'Another lead-in that stays text.'),
+    ])]
+    const blocks = reflow(pages).blocks
+    assert.deepEqual(blocks.map((b) => `${b.type === 'heading' ? `h${b.level}` : b.type}: ${plain(b)}`), [
+      'h1: Getting Started',
+      'paragraph: Read this first and then go on.',
+      'paragraph: Note. This is a lead-in, not a heading.',
+      'h1: The Village',
+      'paragraph: The village is small.',
+      'h1: The Forest',
+      'paragraph: The forest is dark.',
+      'paragraph: Tip. Another lead-in that stays text.',
+    ])
   })
 })
 

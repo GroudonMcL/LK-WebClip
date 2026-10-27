@@ -121,6 +121,26 @@ def layouts():
     column(c, left, 300, lines(30, 20, 504))
     text(c, W - 60, H - 30, '5')
     c.showPage()
+
+    # Page 6: two columns with a tinted panel across both (its own two columns inside), then text
+    # wrapped round a picture in the left column.
+    text(c, left, 70, 'The Inn', 22, 'Helvetica-Bold')
+    column(c, left, 100, lines(40, 8, colw))
+    column(c, right, 100, lines(41, 8, colw))
+    c.setFillColorRGB(0.91, 0.86, 0.75)
+    c.rect(48, H - 290, 516, 90, stroke=0, fill=1)
+    c.setFillColorRGB(0, 0, 0)
+    text(c, 60, 222, 'Rumours at the Inn', 11, 'Helvetica-Bold')
+    column(c, 60, 240, lines(42, 4, 230, 9), 9, 11)
+    column(c, 320, 240, lines(43, 4, 230, 9), 9, 11)
+    c.drawImage(picture(), 190, H - 410, 107, 90)
+    wrapped = lines(44, 7, 125)
+    wrapped[2] = wrapped[2].rstrip('.') + '.'
+    column(c, left, 330, wrapped[:-1] + ['and on it goes'])
+    column(c, left, 414, ['beyond the picture into the rest of the column.'] + lines(45, 12, colw))
+    column(c, right, 330, lines(46, 26, colw))
+    text(c, W - 60, H - 30, '6')
+    c.showPage()
     c.save()
 
 

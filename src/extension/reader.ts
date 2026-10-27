@@ -593,6 +593,7 @@ function showPanel(name: Panel | null): void {
   main.classList.toggle('with-side', !!name)
   for (const [key, button] of Object.entries(panelButtons)) button.setAttribute('aria-pressed', String(key === name))
   contentsPane.hidden = name !== 'contents'
+  if (name !== 'contents') markMatches('')
   stylesPane.hidden = name !== 'styles'
   layoutPane.hidden = name !== 'layout'
   renderPanel()
@@ -606,13 +607,21 @@ function renderPanel(): void {
 
 // ---------------------------------------------------------------------------------- contents
 
+/** What the Contents panel's box holds, kept when the panel is drawn again as more pages load. */
+let query = ''
+
+/** The Contents panel: every heading, and a box that finds headings and searches the whole text. */
 function renderContents(): void {
   if (!book?.result) return
   const headings = Array.from(flow.querySelectorAll<HTMLElement>('h1[data-boxes], h2[data-boxes], h3[data-boxes], h4[data-boxes]'))
-  const filter = el('input', { type: 'search', class: 'toc-filter', placeholder: 'Find a heading…', 'aria-label': 'Find a heading' })
+  const hadFocus = document.activeElement?.classList.contains('toc-filter') ?? false
+  const filter = el('input', { type: 'search', class: 'toc-filter', placeholder: 'Find a heading, or search the text…', 'aria-label': 'Find a heading, or search the text', value: query })
   const list = el('ul', { class: 'toc' })
+  const found = el('div', { class: 'search-results' })
+  let first: HTMLElement | undefined
   const fill = () => {
-    const needle = filter.value.trim().toLowerCase()
+    query = filter.value
+    const needle = query.trim().toLowerCase()
     clear(list, ...headings
       .filter((h) => !needle || (h.textContent ?? '').toLowerCase().includes(needle))
       .map((h) => {
@@ -620,15 +629,75 @@ function renderContents(): void {
         return el('li', { class: `l${h.tagName.slice(1)}` },
           el('button', { type: 'button', onclick: () => jumpTo(h) }, el('span', {}, h.textContent ?? ''), el('span', { class: 'toc-page' }, box ? `p. ${box[0]}` : '')))
       }))
+    const matches = needle.length >= 3 ? searchText(needle) : []
+    first = matches[0]?.block ?? list.querySelector<HTMLElement>('button') ?? undefined
+    markMatches(needle.length >= 3 ? needle : '')
+    clear(found, needle.length < 3 ? null : el('h3', {}, matches.length ? `In the text: ${matches.length >= SEARCH_LIMIT ? `${SEARCH_LIMIT}+` : matches.length} place${matches.length === 1 ? '' : 's'}` : 'Not found in the text'),
+      matches.length ? el('ul', { class: 'toc matches' }, ...matches.map(({ block, before, match, after }) => {
+        const [box] = boxesOf(block)
+        return el('li', {}, el('button', { type: 'button', onclick: () => jumpTo(block) },
+          el('span', {}, before, el('mark', {}, match), after),
+          el('span', { class: 'toc-page' }, box ? `p. ${box[0]}` : '')))
+      })) : null)
   }
-  filter.addEventListener('input', debounce(fill, 150))
+  filter.addEventListener('input', debounce(fill, 200))
+  filter.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !first) return
+    e.preventDefault()
+    if (first.tagName === 'BUTTON') first.click()
+    else jumpTo(first)
+  })
   fill()
   clear(contentsPane,
     el('h2', {}, 'Contents'),
     el('p', { class: 'muted' }, headings.length
-      ? `${headings.length} heading${headings.length === 1 ? '' : 's'} found. If some are missing or wrong, correct their text styles under Headings.`
-      : 'No headings found yet. Under Headings, mark the styles that are headings in this PDF.'),
-    filter, list)
+      ? `${headings.length} heading${headings.length === 1 ? '' : 's'} found. If some are missing or wrong, correct their text styles under Headings. Type three letters or more to search the whole text as well.`
+      : 'No headings found yet. Under Headings, mark the styles that are headings in this PDF. Type three letters or more to search the text.'),
+    filter, found, el('h3', {}, 'Headings'), list)
+  if (hadFocus) {
+    filter.focus()
+    filter.setSelectionRange(filter.value.length, filter.value.length)
+  }
+}
+
+const SEARCH_LIMIT = 200
+
+/** Paragraphs, list items and tables whose text holds the words, with a little text either side. */
+function searchText(needle: string): { block: HTMLElement; before: string; match: string; after: string }[] {
+  const out: { block: HTMLElement; before: string; match: string; after: string }[] = []
+  const blocks = Array.from(flow.querySelectorAll<HTMLElement>('[data-boxes]')).filter((b) => !/^H[1-4]$/.test(b.tagName) && !b.classList.contains('statblock') && !b.querySelector('[data-boxes]'))
+  for (const block of blocks) {
+    const text = (block.textContent ?? '').replace(/\s+/g, ' ')
+    const at = text.toLowerCase().indexOf(needle)
+    if (at < 0) continue
+    const before = text.slice(Math.max(0, at - 40), at)
+    out.push({ block, before: (at > 40 ? '…' : '') + before, match: text.slice(at, at + needle.length), after: text.slice(at + needle.length, at + needle.length + 60) + (at + needle.length + 60 < text.length ? '…' : '') })
+    if (out.length >= SEARCH_LIMIT) break
+  }
+  return out
+}
+
+/** Marks every place the words appear in the text (CSS custom highlights, so the text is untouched). */
+function markMatches(needle: string): void {
+  const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights
+  const HighlightClass = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
+  if (!highlights || !HighlightClass) return
+  if (!needle) {
+    highlights.delete('lk-search')
+    return
+  }
+  const ranges: Range[] = []
+  const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node && ranges.length < 1000; node = walker.nextNode()) {
+    const text = (node.textContent ?? '').toLowerCase()
+    for (let at = text.indexOf(needle); at >= 0 && ranges.length < 1000; at = text.indexOf(needle, at + needle.length)) {
+      const range = document.createRange()
+      range.setStart(node, at)
+      range.setEnd(node, at + needle.length)
+      ranges.push(range)
+    }
+  }
+  highlights.set('lk-search', new HighlightClass(...ranges))
 }
 
 /** Scrolls the text to a block and shows where it sits on the page. */
@@ -695,6 +764,10 @@ function renderLayout(): void {
       el('span', {}),
       el('div', { class: 'margins' }, margin('top', 'Top'), margin('bottom', 'Bottom'), margin('left', 'Left'), margin('right', 'Right')),
       el('span', { class: 'hint' }, 'Running heads, page numbers and chapter tabs along an edge: shade them out and they are left out of the text.')),
+    el('div', { class: 'field' },
+      el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: showOrder, onchange: (e: Event) => { showOrder = (e.target as HTMLInputElement).checked; updateOverlays() } }), 'Show the reading order on the pages'),
+      el('span', {}),
+      el('span', { class: 'hint' }, 'Numbers each block of text where it sits on the page, in the order it is read, so a wrong order shows at a glance.')),
     el('div', { class: 'actions' },
       Object.keys(layout).length ? el('button', { type: 'button', onclick: () => void setLayout(current, {}) }, 'Reset layout') : null),
   )
@@ -739,9 +812,13 @@ async function setLayout(target: Book, layout: Layout): Promise<void> {
   if (book === target) showText()
 }
 
-/** Draws the dividers and shaded margins on every page. */
+/** Whether the pages show the reading order (numbered boxes); for this visit only. */
+let showOrder = false
+
+/** Draws the dividers and shaded margins on every page, and the reading order when asked for. */
 function updateOverlays(): void {
   if (!book) return
+  drawOrder()
   const { layout } = book
   const dividers = book.result?.dividers ?? {}
   for (const page of Array.from(pagesPane.querySelectorAll<HTMLElement>('.page'))) {
@@ -758,6 +835,43 @@ function updateOverlays(): void {
     if (m.bottom) page.append(el('div', { class: 'margin-shade', style: `left:0;right:0;bottom:0;height:${m.bottom * 100}%` }))
     if (m.left) page.append(el('div', { class: 'margin-shade', style: `top:0;bottom:0;left:0;width:${m.left * 100}%` }))
     if (m.right) page.append(el('div', { class: 'margin-shade', style: `top:0;bottom:0;right:0;width:${m.right * 100}%` }))
+  }
+}
+
+/**
+ * Numbers each block of the reflowed text on the pages, in reading order: 1, 2, 3 on each page. A
+ * block over several lines or columns shows each of its pieces with the same number.
+ */
+function drawOrder(): void {
+  for (const old of Array.from(pagesPane.querySelectorAll('.order-box'))) old.remove()
+  if (!showOrder) return
+  const blocks = Array.from(flow.querySelectorAll<HTMLElement>('[data-boxes]')).filter((b) => !b.querySelector('[data-boxes]'))
+  const counts = new Map<number, number>()
+  for (const block of blocks) {
+    const boxes = boxesOf(block)
+    const numbers = new Map<number, number>()
+    for (const [p] of boxes) {
+      if (numbers.has(p)) continue
+      const n = (counts.get(p) ?? 0) + 1
+      counts.set(p, n)
+      numbers.set(p, n)
+    }
+    // One outline per run of lines: the pieces of a block that follow one another down a column.
+    const runs: BoxTuple[] = []
+    for (const b of boxes) {
+      const last = runs.at(-1)
+      if (last && last[0] === b[0] && Math.abs(last[1] - b[1]) < 12 && b[2] - last[4] < 20 && b[2] >= last[2]) {
+        runs[runs.length - 1] = [last[0], Math.min(last[1], b[1]), last[2], Math.max(last[3], b[3]), Math.max(last[4], b[4])]
+      } else runs.push([...b])
+    }
+    runs.forEach((run, i) => {
+      const page = pagesPane.querySelector<HTMLElement>(`.page[data-page="${run[0]}"]`)
+      if (!page) return
+      const first = !runs.slice(0, i).some((r) => r[0] === run[0])
+      const node = el('div', { class: 'order-box' }, first ? el('span', {}, String(numbers.get(run[0]))) : null)
+      placeBox(node, page, { x0: run[1], y0: run[2], x1: run[3], y1: run[4] })
+      page.append(node)
+    })
   }
 }
 
@@ -1015,8 +1129,8 @@ function renderStyles(): void {
         el('br'), el('span', { class: 'muted' }, 'For a scan with OCR text: headings are found from their size alone, and uneven lines are joined.'))),
     el('h2', {}, 'Text styles'),
     el('p', { class: 'muted' }, current.result!.scan
-      ? 'Each text size in this PDF, largest first. If a heading came out as text (or the other way round), change it here. Corrections are remembered for this PDF.'
-      : 'Each font and size in this PDF, largest first. If a heading came out as text (or the other way round), change it here. Corrections are remembered for this PDF.'),
+      ? 'Each text size in this PDF, largest first. If a heading came out as text (or the other way round), change it here. Lines in capitals are taken as headings too. Corrections are remembered for this PDF.'
+      : 'Each font and size in this PDF, largest first. If a heading came out as text (or the other way round), change it here. A heading style only takes lines set mostly in it, so where bold text is a heading, bold lead-ins (“Note. …”) stay text. Corrections are remembered for this PDF.'),
     ...styles.map((s) => {
       const select = el('select', { 'aria-label': `Role of ${s.key}` }, ...roles.map(([value, label]) => el('option', { value, selected: s.role === value }, label)))
       select.addEventListener('change', () => void setRole(current, s.key, select.value as Role))

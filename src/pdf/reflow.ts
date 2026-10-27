@@ -141,7 +141,7 @@ interface Segment extends Box {
 type Line =
   | (Box & { kind: 'text'; page: number; segs: Segment[]; col: Column; side?: boolean; size: number; baseline: number })
   | (Box & { kind: 'image'; page: number; image: PdfImage; col: Column; side?: boolean })
-  | (Box & { kind: 'region'; page: number; region: RegionKind; segs: Segment[]; col: Column; side?: boolean })
+  | (Box & { kind: 'region'; page: number; region: RegionKind | 'panel'; segs: Segment[]; col: Column; side?: boolean })
 
 /** A column's number on its page, counted from the left; SPAN for lines across every column. */
 type Column = number
@@ -184,12 +184,23 @@ export function reflow(pages: PageContent[], options: ReflowOptions = {}): Reflo
   // Hand-marked areas come out first: skipped text goes, the rest is read on its own.
   const split = pages.map((p) => splitRegions(p, (options.regions ?? []).filter((r) => r.page === p.number)))
   const segsByPage = split.map((s) => toSegments(dropMarginalia(s.page, tol), tol))
-  const regionSegs = split.map((s) => s.regions.map(({ region, page }) => ({ region, segs: toSegments(page, tol, region.kind === 'table' ? 0.4 : 0.9) })))
+  const regionSegs: { region: Omit<Region, 'kind'> & { kind: RegionKind | 'panel' }; segs: Segment[] }[][] =
+    split.map((s) => s.regions.map(({ region, page }) => ({ region, segs: toSegments(page, tol, region.kind === 'table' ? 0.4 : 0.9) })))
   const allSegs = [...segsByPage.flat(), ...regionSegs.flat().flatMap((r) => r.segs)]
+  const art = new Map<number, Box[]>()
   const bodySize = (scan
     ? mostUsed(allSegs.map((s) => [s.styleSize, segText(s).length] as const))
     : mostUsed(allSegs.flatMap((s) => s.items.map((i) => [round(i.size), i.str.length] as const)))) ?? 10
   for (const segs of segsByPage) joinDropCaps(segs, bodySize)
+  // Coloured panels (boxed text, sidebars, stat blocks on a tint) are read as a unit, like a marked area.
+  split.forEach((sp, i) => {
+    const segs = segsByPage[i] ?? []
+    const panels = findPanels(sp.page, segs, bodySize)
+    if (!panels.length) return
+    const held = panels.map((panel) => ({ region: { ...panel, page: sp.page.number, kind: 'panel' as const }, segs: segs.filter((s) => centreIn(s, panel)) }))
+    segsByPage[i] = segs.filter((s) => !panels.some((panel) => centreIn(s, panel)))
+    regionSegs[i] = [...(regionSegs[i] ?? []), ...held]
+  })
   const styles = detectStyles(allSegs, bodySize, options.styles ?? {}, scan)
   const roles = new Map(styles.map((s) => [s.key, s.role]))
   // Over many pages, titles, wide tables and contents leaders all cross the gutter, so it only has
@@ -197,7 +208,9 @@ export function reflow(pages: PageContent[], options: ReflowOptions = {}): Reflo
   const onSide = (parity: number) => segsByPage.filter((_, i) => (pages[i]?.number ?? 0) % 2 === parity).flat()
   const sideGutters = [findGutters(pages, onSide(0)), findGutters(pages, onSide(1))]
   const wholeGutters = findGutters(pages, segsByPage.flat())
-  const keepImages = new Set(pickImages(split.map((s) => s.page)).map((i) => `${i.page}:${i.id}`))
+  const kept = pickImages(split.map((s) => s.page))
+  const keepImages = new Set(kept.map((i) => `${i.page}:${i.id}`))
+  for (const img of kept) art.set(img.page, [...(art.get(img.page) ?? []), img])
 
   const lines: Line[] = []
   const columnEdges = new Map<string, { left: number; right: number }>()
@@ -238,7 +251,10 @@ export function reflow(pages: PageContent[], options: ReflowOptions = {}): Reflo
   })
 
   const words = wordSet(allSegs)
-  const blocks = buildBlocks(lines, roles, columnEdges, words, pages, tol)
+  // In scan mode a line in capitals stands for a heading one level below the smallest found by size.
+  const levels = styles.map((s) => Number(s.role.slice(1))).filter((n) => n > 0)
+  const capsLevel = scan ? Math.min(4, Math.max(0, ...levels) + 1) as 1 | 2 | 3 | 4 : undefined
+  const blocks = buildBlocks(lines, roles, columnEdges, words, pages, tol, { art, capsLevel })
   return { blocks: groupStatBlocks(blocks), styles, layouts, dividers, scan, scanned: pages.filter((p) => p.hiddenText).map((p) => p.number) }
 }
 
@@ -308,6 +324,27 @@ export function looksScanned(pages: PageContent[]): boolean {
     }
   }
   return chars > 0 && (ocr / chars >= 0.5 || (pairs >= 20 && jitter / pairs > 0.3))
+}
+
+const centreIn = (s: Box, b: Box) => (s.x0 + s.x1) / 2 >= b.x0 && (s.x0 + s.x1) / 2 <= b.x1 && (s.y0 + s.y1) / 2 >= b.y0 && (s.y0 + s.y1) / 2 <= b.y1
+
+/**
+ * Coloured panels that hold text: boxed text, a sidebar on a tint, a stat block on a tan panel.
+ * Only the outermost of nested panels counts, and only one that its text stays inside (a bar
+ * behind a heading, or a table's stripes, have text running out of them or no room for any).
+ */
+function findPanels(page: PageContent, segs: Segment[], bodySize: number): Box[] {
+  const area = (b: Box) => (b.x1 - b.x0) * (b.y1 - b.y0)
+  const contains = (o: Box, c: Box) => o.x0 <= c.x0 + 1 && o.x1 >= c.x1 - 1 && o.y0 <= c.y0 + 1 && o.y1 >= c.y1 - 1
+  const candidates = page.shapes.filter((sh) => sh.fill !== '#ffffff' && sh.fill !== '#000000' &&
+    sh.x1 - sh.x0 >= 80 && sh.y1 - sh.y0 >= 3 * bodySize && area(sh) < page.width * page.height * 0.4)
+  const outer = candidates.filter((c, i) => !candidates.some((o, j) => o !== c && contains(o, c) && (area(o) > area(c) + 1 || j < i)))
+  return outer.filter((panel) => {
+    const inside = segs.filter((sg) => centreIn(sg, panel))
+    if (inside.length < 2 || inside.length > 0.8 * segs.length) return false
+    const pokesOut = (sg: Segment) => sg.x0 < panel.x0 - 4 || sg.x1 > panel.x1 + 4 || sg.y0 < panel.y0 - 4 || sg.y1 > panel.y1 + 4
+    return !segs.some((sg) => overlap(sg, panel) > 0 && sg.y1 > panel.y0 && sg.y0 < panel.y1 && pokesOut(sg))
+  })
 }
 
 /** Takes a page's hand-marked areas out of it: skipped text and images go, marked text is set aside. */
@@ -608,7 +645,7 @@ function columnsOf(segs: Segment[], gutters: Gutter[]): { x0: number; x1: number
  * "text" also mostly lines that fill the column, which a table's columns don't, and fewer lines
  * crossing the gutter than sit in the columns beside it.
  */
-function keepGutters(segs: Segment[], gutters: Gutter[], test: (g: Gutter) => 'lines' | 'text'): Gutter[] {
+function keepGutters(segs: Segment[], gutters: Gutter[], test: (g: Gutter) => 'lines' | 'text', minLines = 4): Gutter[] {
   let kept = [...gutters].sort((a, b) => a.left - b.left)
   while (kept.length) {
     const cols = columnsOf(segs, kept)
@@ -622,7 +659,7 @@ function keepGutters(segs: Segment[], gutters: Gutter[], test: (g: Gutter) => 'l
     }
     const bad = cols.findIndex((_, i) => {
       const beside = [kept[i - 1], kept[i]].filter((g): g is Gutter => !!g)
-      if (inside[i]!.length < 4) return true
+      if (inside[i]!.length < minLines) return true
       const strict = beside.filter((g) => test(g) === 'text')
       if (strict.length && !textLike(i)) return true
       return strict.some((g) => crossing[kept.indexOf(g)]! > Math.min(inside[kept.indexOf(g)]!.length, inside[kept.indexOf(g) + 1]!.length))
@@ -638,8 +675,8 @@ function keepGutters(segs: Segment[], gutters: Gutter[], test: (g: Gutter) => 'l
 }
 
 /** Gutters found on the page alone, for pages laid out unlike the rest of the book. */
-function pageGutters(segs: Segment[], size: number): Gutter[] {
-  if (segs.length < 8) return []
+function pageGutters(segs: Segment[], size: number, minLines = 4): Gutter[] {
+  if (segs.length < 2 * minLines) return []
   const x0 = Math.floor(Math.min(...segs.map((s) => s.x0)))
   const x1 = Math.ceil(Math.max(...segs.map((s) => s.x1)))
   const width = x1 - x0
@@ -657,7 +694,7 @@ function pageGutters(segs: Segment[], size: number): Gutter[] {
     if (end - x >= Math.max(6, 0.5 * size)) gutters.push({ left: x0 + x, right: x0 + end })
     x = end
   }
-  return keepGutters(segs, gutters, () => 'text')
+  return keepGutters(segs, gutters, () => 'text', minLines)
 }
 
 /** Gutters for a layout set by hand: the emptiest strip near where each should be. */
@@ -715,7 +752,7 @@ function orderPage(
   page: PageContent,
   segs: Segment[],
   images: PdfImage[],
-  regions: { region: Region; segs: Segment[] }[],
+  regions: { region: { kind: RegionKind | 'panel' }; segs: Segment[] }[],
   columns: Columns,
   roles: Map<string, Role>,
   tol: Tolerance,
@@ -858,11 +895,13 @@ function orderPage(
 // 3. Text styles
 
 function detectStyles(segs: Segment[], bodySize: number, overrides: Record<string, Role>, scan: boolean): TextStyle[] {
-  const stats = new Map<string, { font: string; size: number; chars: number; segs: number; example: string; pages: Set<number> }>()
+  const stats = new Map<string, { font: string; size: number; chars: number; segs: number; example: string; pages: Set<number>; whole: number }>()
   const familyChars = new Map<string, number>()
   for (const s of segs) {
     const text = segText(s)
-    const st = stats.get(s.style) ?? { font: s.font, size: s.styleSize, chars: 0, segs: 0, example: text.slice(0, 60), pages: new Set() }
+    const st = stats.get(s.style) ?? { font: s.font, size: s.styleSize, chars: 0, segs: 0, example: text.slice(0, 60), pages: new Set(), whole: 0 }
+    // A short line wholly in this style, not ending a sentence: how headings look.
+    if (s.items.every((i) => i.font === s.font || !i.str.trim()) && text.trim().length <= 60 && !/[.:,;]$/.test(text.trim())) st.whole++
     // Contents lines ("Credits . . . . 3") are long text, whatever their pieces look like.
     st.chars += s.leader ? 100 : text.length
     st.segs++
@@ -895,8 +934,13 @@ function detectStyles(segs: Segment[], bodySize: number, overrides: Record<strin
     return (['h1', 'h2', 'h3', 'h4'] as const)[Math.min(rank, 3)]!
   }
 
+  // A word processor's export sets headings in the body face, only bold. Where the book has (almost)
+  // no headings by size, short lines wholly in bold body text are the next level down.
+  const boldHeading = (st: { font: string; size: number; segs: number; whole: number }) => !scan && ranked.length < 2 &&
+    family(st.font) === bodyFamily && /bold|black|heavy|semibold/i.test(st.font) && Math.abs(st.size - bodySize) <= 1 &&
+    st.segs >= 3 && st.whole >= 3 && st.whole >= 0.6 * st.segs
   return [...stats].map(([key, st]) => {
-    const auto: Role = SYMBOL_FONT.test(st.font) ? 'ignore' : candidate(st) ? levelFor(st.size) : 'body'
+    const auto: Role = SYMBOL_FONT.test(st.font) ? 'ignore' : candidate(st) ? levelFor(st.size) : boldHeading(st) ? (['h1', 'h2', 'h3', 'h4'] as const)[ranked.length]! : 'body'
     return { key, font: st.font, size: st.size, chars: st.chars, example: st.example, role: overrides[key] ?? auto, auto: !(key in overrides) }
   }).sort((a, b) => b.size - a.size || b.chars - a.chars)
 }
@@ -916,8 +960,17 @@ type Open =
       offset: number
       lines: number
       dropCap?: boolean
+      /** Where the paragraph already sits in the blocks, when it carries on after an interruption. */
+      index?: number
     }
   | { type: 'table'; lines: Segment[][]; page: number; boxes: PageBox[]; last: Line; size: number }
+
+interface BlockContext {
+  /** The pictures kept on each page, which text may wrap round. */
+  art: Map<number, Box[]>
+  /** Scan mode: the level a line set in capitals takes as a heading. */
+  capsLevel?: 1 | 2 | 3 | 4
+}
 
 function buildBlocks(
   lines: Line[],
@@ -926,34 +979,55 @@ function buildBlocks(
   words: Set<string>,
   pages: PageContent[],
   tol: Tolerance,
+  context: BlockContext,
 ): ReflowBlock[] {
   const blocks: ReflowBlock[] = []
   let open: Open | null = null
   const pageOf = new Map(pages.map((p) => [p.number, p]))
+  /** Pictures met inside a paragraph, which text wraps round: they follow the paragraph. */
+  let deferred: ReflowBlock[] = []
+  /** A paragraph cut off mid-sentence by a table, a picture across the page or a sidebar, which may carry on after it. */
+  let suspended: Extract<Open, { type: 'paragraph' }> | null = null
 
   const flush = () => {
-    if (!open) return
-    if (open.type === 'heading') blocks.push({ type: 'heading', level: open.level, text: open.text.trim(), page: open.page, boxes: open.boxes })
-    else if (open.type === 'paragraph') {
+    if (open?.type === 'heading') blocks.push({ type: 'heading', level: open.level, text: open.text.trim(), page: open.page, boxes: open.boxes })
+    else if (open?.type === 'paragraph') {
       const runs = tidy(open.runs)
       if (runs.length) {
         const boxed = isBoxed(open.boxes, pageOf)
-        blocks.push({ type: 'paragraph', runs, ...(open.list ? { list: true } : {}), ...(boxed ? { boxed } : {}), page: open.page, boxes: open.boxes })
+        const block: ReflowBlock = { type: 'paragraph', runs, ...(open.list ? { list: true } : {}), ...(boxed ? { boxed } : {}), page: open.page, boxes: open.boxes }
+        if (open.index === undefined) {
+          open.index = blocks.length
+          blocks.push(block)
+        } else blocks[open.index] = block
       }
-    } else blocks.push(...finishTable(open))
+    } else if (open?.type === 'table') blocks.push(...finishTable(open))
     open = null
+    blocks.push(...deferred)
+    deferred = []
+  }
+  /** Closes the open paragraph, keeping it to carry on if it stopped mid-sentence. */
+  const interrupt = () => {
+    const paragraph = open?.type === 'paragraph' && !open.list && !TERMINAL.test(open.runs.map((r) => r.text).join('').trimEnd()) ? open : null
+    flush()
+    if (paragraph) suspended = paragraph
   }
 
   for (const line of lines) {
     const box: PageBox = { page: line.page, x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1 }
     if (line.kind === 'image') {
-      flush()
-      blocks.push({ type: 'image', id: line.image.id, width: line.image.width, height: line.image.height, page: line.page, boxes: [box] })
+      const image: ReflowBlock = { type: 'image', id: line.image.id, width: line.image.width, height: line.image.height, page: line.page, boxes: [box] }
+      if (open?.type === 'paragraph') deferred.push(image)
+      else {
+        flush()
+        blocks.push(image)
+      }
       continue
     }
     if (line.kind === 'region') {
-      flush()
-      blocks.push(regionBlock(line, roles, words, pageOf))
+      interrupt()
+      if (line.region === 'panel') blocks.push(...panelBlocks(line, roles, edges, words, pages, tol, context))
+      else blocks.push(regionBlock(line, roles, words, pageOf))
       continue
     }
     const segs = line.segs
@@ -964,19 +1038,24 @@ function buildBlocks(
         open.boxes.push(box)
         open.last = line
       } else {
-        flush()
+        interrupt()
         open = { type: 'table', lines: [segs], page: line.page, boxes: [box], last: line, size: line.size }
       }
       continue
     }
 
     const seg = segs[0]!
-    const role = roles.get(seg.style) ?? 'body'
-    if (role === 'ignore') continue
     const text = segText(seg)
+    let role = roles.get(seg.style) ?? 'body'
+    if (role === 'ignore') continue
+    // A heading style's line is mostly in that style: a bold lead-in ("Handaxe." and the rest of the
+    // line in the body face) is text, even when bold lines alone are headings.
+    if (role !== 'body' && !tol.scan && !mostlyIn(seg, seg.font)) role = 'body'
+    if (role === 'body' && context.capsLevel && capitals(text)) role = `h${context.capsLevel}`
 
     if (role !== 'body') {
       const level = Number(role.slice(1)) as 1 | 2 | 3 | 4
+      suspended = null
       if (open?.type === 'heading' && open.level === level && open.last.page === line.page && line.y0 - open.last.y1 < line.size * 0.8) {
         // "Hired" + "By the Seekers": a small word carried to the next line was capitalised as a line start.
         const more = text.trim().replace(/^\p{L}+/u, (w) => (SMALL_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : w))
@@ -1008,6 +1087,7 @@ function buildBlocks(
     const colLeft: number = edges.get(`${line.page}:${line.col}`)?.left ?? line.x0
     if (BULLET.test(text)) {
       flush()
+      suspended = null
       const first = runs[0]
       if (first) first.text = first.text.replace(BULLET, '')
       const textItem = seg.items.find((i) => !BULLET.test(i.str) || i.str.replace(BULLET, '').trim())
@@ -1016,7 +1096,7 @@ function buildBlocks(
       continue
     }
 
-    if (open?.type === 'paragraph' && continues(open, line, seg, runs, edges, tol)) {
+    if (open?.type === 'paragraph' && continues(open, line, seg, runs, edges, tol, context.art)) {
       if (open.dropCap && open.lines === 1) open.family = fam
       appendLine(open.runs, runs, words)
       open.boxes.push(box)
@@ -1025,14 +1105,67 @@ function buildBlocks(
       open.lines++
       continue
     }
-    flush()
+    // Main text cut off by a sidebar waits for the sidebar to end.
+    if (open?.type === 'paragraph' && !!line.side && !open.last.side) interrupt()
+    else flush()
+    // The paragraph a table or picture cut off carries on here: mid-sentence, starting in lower case.
+    const resumed = suspended as Extract<Open, { type: 'paragraph' }> | null
+    if (resumed && !!resumed.last.side === !!line.side) {
+      suspended = null
+      if (/^[^\p{L}]*\p{Ll}/u.test(text) && continues(resumed, line, seg, runs, edges, tol, context.art, true)) {
+        open = resumed
+        appendLine(resumed.runs, runs, words)
+        resumed.boxes.push(box)
+        resumed.last = line
+        resumed.offset = line.x0 - colLeft
+        resumed.lines++
+        continue
+      }
+    }
     open = { type: 'paragraph', runs, offset: line.x0 - colLeft, lines: 1, dropCap: seg.dropCap, family: fam, size: seg.size, page: line.page, boxes: [box], last: line }
   }
   flush()
   return blocks
 }
 
-function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Line, { kind: 'text' }>, seg: Segment, runs: Run[], edges: Map<string, { left: number; right: number }>, tol: Tolerance): boolean {
+/** Whether most of a segment's text is set in the given font. */
+function mostlyIn(seg: Segment, font: string): boolean {
+  const total = seg.items.reduce((n, i) => n + i.str.trim().length, 0)
+  return seg.items.filter((i) => i.font === font).reduce((n, i) => n + i.str.trim().length, 0) >= total / 2
+}
+
+/** A short line in capitals, with a word of four letters or more: "THE SUNKEN TEMPLE", not "STR DEX CON". */
+function capitals(text: string): boolean {
+  const t = text.trim()
+  return t.length <= 60 && !/\p{Ll}/u.test(t) && /\p{Lu}{4}/u.test(t) && !/[.,;]$/.test(t)
+}
+
+/**
+ * A coloured panel's text, read on its own: in its own columns if it has them, then into
+ * paragraphs, headings and tables like the page.
+ */
+function panelBlocks(line: Extract<Line, { kind: 'region' }>, roles: Map<string, Role>, edges: Map<string, { left: number; right: number }>, words: Set<string>, pages: PageContent[], tol: Tolerance, context: BlockContext): ReflowBlock[] {
+  const page = pages.find((p) => p.number === line.page)
+  if (!page) return []
+  const size = median(line.segs.map((sg) => sg.size))
+  // A panel is short, so two lines make a column.
+  const gutters = pageGutters(line.segs, size, 2)
+  // Columns inside the panel are numbered apart from the page's.
+  const base = 1000 + Math.round(line.y0) * 10
+  const inner = orderPage(page, line.segs, [], [], { gutters, sidebars: new Set() }, roles, tol).map((l) => ({ ...l, col: base + l.col + 1, side: line.side })) as Line[]
+  const innerEdges = new Map(edges)
+  for (const col of new Set(inner.map((l) => l.col))) {
+    const ls = inner.filter((l) => l.col === col)
+    innerEdges.set(`${line.page}:${col}`, { left: Math.min(...ls.map((l) => l.x0)), right: Math.max(...ls.map((l) => l.x1)) })
+  }
+  return buildBlocks(inner, roles, innerEdges, words, pages, tol, context)
+}
+
+/**
+ * Whether a line carries on the open paragraph. `resume` is for a paragraph cut off by a table or a
+ * picture: it is judged as if it carried on in the next column.
+ */
+function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Line, { kind: 'text' }>, seg: Segment, runs: Run[], edges: Map<string, { left: number; right: number }>, tol: Tolerance, art: Map<number, Box[]>, resume = false): boolean {
   const prev = open.last
   if (prev.kind !== 'text') return false
   if (seg.leader || seg.caption || prev.segs.some((s) => s.leader || s.caption)) return false
@@ -1051,7 +1184,7 @@ function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Lin
   const edge = edges.get(`${line.page}:${line.col}`)
   const offset = line.x0 - (edge?.left ?? line.x0)
 
-  if (prev.page !== line.page || prev.col !== line.col) {
+  if (resume || prev.page !== line.page || prev.col !== line.col) {
     // Carrying on in the next column or page: only mid-sentence, starting where the paragraph's lines start.
     if (ended || startsBold) return false
     return open.lines > 1 || open.list ? Math.abs(offset - open.offset) <= align : offset <= open.offset + align
@@ -1061,12 +1194,17 @@ function continues(open: Extract<Open, { type: 'paragraph' }>, line: Extract<Lin
   if (open.list) return Math.abs(offset - open.offset) <= align || (afterDropCap ?? false)
   const prevEdge = edges.get(`${prev.page}:${prev.col}`)
   const centered = (l: Box) => !!prevEdge && Math.abs((l.x0 + l.x1) / 2 - (prevEdge.left + prevEdge.right) / 2) < 4 && l.x0 - prevEdge.left > seg.size
-  const short = !!prevEdge && prev.x1 < prevEdge.right - 3 * seg.size
+  // Text wrapped round a picture: a line that stops short of the picture, or starts after it, is
+  // as good as a full one.
+  const beside = (l: Box & { page: number }) => (art.get(l.page) ?? []).filter((img) => img.y0 < l.y1 && img.y1 > l.y0)
+  const pictureRight = beside(prev).some((img) => img.x0 > prev.x0 + 4 * seg.size)
+  const pictureLeft = beside(line).some((img) => img.x1 < line.x1 - 4 * seg.size && img.x1 > (prevEdge?.left ?? 0))
+  const short = !!prevEdge && prev.x1 < prevEdge.right - 3 * seg.size && !pictureRight
   // A hanging indent ("Advancement: 18–19 HD (Large); …" with its later lines set in): the first
   // line fills its column and stops mid-sentence, and the next starts a little way in.
   const full = !!prevEdge && prev.x1 - prevEdge.left >= 0.8 * (prevEdge.right - prevEdge.left)
   const hanging = open.lines === 1 && full && !ended && line.x0 - prev.x0 <= 3 * seg.size
-  if (line.x0 - prev.x0 > tol.indent * seg.size && !(centered(line) && centered(prev)) && !hanging) return false
+  if (line.x0 - prev.x0 > tol.indent * seg.size && !(centered(line) && centered(prev)) && !hanging && !pictureLeft) return false
   if (short && (ended || startsBold)) return false
   return true
 }
