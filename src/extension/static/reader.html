@@ -13,16 +13,30 @@
       <h1 id="book-title">LK Reader</h1>
       <span id="status"></span>
     </div>
+    <nav class="pager" aria-label="Pages">
+      <button id="prev-page" type="button" title="Previous page (←)" disabled>◀</button>
+      <label class="page-field" title="Go to a page">
+        <input id="page-input" type="number" min="1" value="1" aria-label="Page number" disabled>
+        <span>of <span id="page-count">–</span></span>
+      </label>
+      <button id="next-page" type="button" title="Next page (→)" disabled>▶</button>
+    </nav>
     <button id="open-file" type="button" title="Open another PDF from your computer">Open PDF…</button>
+    <button id="toggle-contents" type="button" title="The headings found in this PDF: click one to go to it" disabled>Contents</button>
     <button id="mark-area" type="button" title="Drag a rectangle on a page to read it as one block, leave it out, or read it as a table" aria-pressed="false" disabled>Mark area</button>
     <button id="toggle-styles" type="button" title="Correct which text styles are headings" disabled>Headings</button>
+    <button id="toggle-layout" type="button" title="Help the reader with the columns and margins of this PDF" disabled>Layout</button>
     <button id="send" type="button" class="primary" title="Send the selected text to LegendKeeper" disabled>Send selection</button>
     <input id="file" type="file" accept="application/pdf,.pdf" hidden>
   </header>
   <main id="main">
     <div id="pages" class="pane" aria-label="Original pages"></div>
     <div id="text" class="pane"><article id="flow"></article></div>
-    <aside id="styles" class="pane" hidden aria-label="Text styles"></aside>
+    <aside id="side" class="pane" hidden>
+      <section id="contents" aria-label="Contents" hidden></section>
+      <section id="styles" aria-label="Text styles" hidden></section>
+      <section id="layout" aria-label="Layout" hidden></section>
+    </aside>
   </main>
   <div id="drop" class="drop" hidden>
     <div class="drop-box">

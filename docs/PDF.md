@@ -8,10 +8,11 @@ Chrome shows PDFs in its own viewer, which extensions cannot inject scripts into
 - **Rebuild the text, don't convert the page.** Generic PDF-to-HTML converters copy the page's look, so two-column books come out scrambled. The reader uses pdf.js to read each run of text with its position and font, and rebuilds the reading order (`src/pdf/reflow.ts`).
 - **Side by side.** The original page sits on the left and the reflowed text on the right, scrolled together. Hovering or clicking a paragraph highlights where it is on the page.
 - **Styles are detected, then correctable.** The most used font and size is body text; larger, distinct styles become heading levels. Wrong ones can be corrected per book (`ReflowOptions.styles`).
+- **The layout is detected, then correctable.** Columns, their divider and the margins are found from the text; where that goes wrong, the reader's **Layout** panel sets them by hand (`ReflowOptions.layout`). The rule is that every automatic step has a manual override, because every publisher's PDFs differ.
 - **Pages are processed as you scroll**, so long books open quickly.
 - **No OCR.** Scanned PDFs without a text layer are out of scope. Scans that already have an OCR text layer are read in scan mode (below).
 - **Corrections belong to the PDF, not the reader.** Text styles, page layouts, marked areas, scan mode and edited pages are all kept per PDF (by its fingerprint), so reopening the book brings them back.
-- **The right-click item appears only on PDF tabs**, if Chrome allows the item to be limited that way (still to be confirmed in Chrome itself).
+- **The right-click item appears only on PDF tabs.** Chrome does limit it that way (confirmed in Chrome).
 - **Local files** (`file:///…`) need **Allow access to file URLs** turned on for the extension in `chrome://extensions`. Dragging a PDF onto the reader page works without it.
 
 ## Prototype (done)
@@ -31,7 +32,7 @@ What it handles, tested against a 21-page DMsGuild adventure:
 
 Known gaps:
 
-- A paragraph interrupted by a full-width block (it ends in one column, a wide table follows, and it carries on next page) is split in two. The same happens to a paragraph that carries on to the next page past a sidebar.
+- A paragraph cut off by a full-width block carries on after it only when it stopped mid-sentence and goes on in lower case (0.9.0); one that goes on with a name or "I" stays split.
 - Centred text (letters, credits) sometimes joins or splits lines oddly. Marking it **Read as one block** fixes it.
 - Every publisher's fonts differ, so other books may need style corrections.
 
@@ -60,7 +61,67 @@ Corrections for pages the reflow gets wrong, and for scanned books.
 - `npm run pdf:reflow` takes `--page-settings settings.json` (`{ layouts, regions, scan }`, as the reader keeps them) and `--scan` / `--no-scan`, and prints each page's columns.
 - `test/fixtures/layouts.pdf` and `scanned.pdf` (made by `test/fixtures/make-layouts-pdf.py`) are read with pdf.js in the unit tests, and `npm run reader:check -- test/fixtures/layouts.pdf` drives the layout menu, marking, editing (and reopening) and scan mode in the browser.
 
+## Navigation, contents and layout (done, 0.9.0)
+
+Developed alongside 0.8.0 and merged in 0.9.0. Tested against a 2001 WotC hardback (print PDF, two columns, mirrored margins, chapter tabs), which showed up several things the first books did not.
+
+**What went wrong, and the fixes**
+
+- *Highlights sat 54pt right and below the text.* Print PDFs keep the trimmed page in a larger sheet with crop marks: the CropBox starts at (54, 54), not the origin. Text was placed in the PDF's own coordinates, not the page as shown. `extractPage` now maps everything through pdf.js's viewport transform, which also handles pages with a `/Rotate`.
+- *Lines from both columns were read as table rows.* The gutter was looked for once across the whole book, but books mirror their margins: the odd pages' columns sit 20–36pt to the right of the even pages', so no strip is clear across all pages. Gutters are now looked for across the pages on each side of the spine first, then the whole book, then on the page itself (see 0.8.0 above for pages laid out differently). Across many pages the gutter only has to be a clear dip (at most a third of the typical cover), as titles, wide tables and contents leaders cross it.
+- *A letter in every table cell ("C", "H", "A"…).* The chapter name runs down the page's edge one upright letter at a time, one letter per line of text, so every row gained a cell. Single letters outside the text area (where lines of text start and end) are dropped before lines are joined; otherwise a 24pt letter 22pt from a heading joins on to it.
+- *"161" as a heading.* Page numbers set in a display face near the bottom edge are dropped when they sit on a line of their own.
+- *A big heading joined across the gutter.* "CHARACTER" (28pt, left column) and "PACKAGES" (18pt, right column) were close enough to join. A segment crossing the gutter is split at a gap between its runs that sits over the gutter.
+- *Body lines beside a wide table swallowed by it, and a table's first header line left out.* Rows join a table from above and below until nothing changes, but never a row with a piece as long as a line of text.
+- *Hanging indents* ("Advancement: … " with its later lines set in) carry on, and a table's title set in another style just under both columns is read right before its table.
+- *Text wrapped round a picture, with the picture's name printed on it, read as a table* (and the picture itself left out, taken for a panel with text on it). A picture's box holds the clear space round the art, so the wrapped lines start inside it. Text counts as being *on* a picture only across its middle; a caption there is a line of its own, and rows whose gap holds the picture are never table rows.
+- Ornament fonts (rules drawn with glyphs: "IndecisionLines", "…Pi") default to Leave out.
+
+**The reader**
+
+- **Page navigation:** ◀ ▶ and a page number box in the bar; ← and → when the focus is not in a field. The number follows the pages pane as it scrolls; going to a page scrolls both panes.
+- **Contents:** every heading found, with its page, and a filter box. Clicking one scrolls the text to it and highlights it on the page. It is the quickest way to see which text styles still need correcting under **Headings**.
+- **Layout:** for PDFs where finding the columns fails, for the whole book (a page's own layout menu wins over it). *Columns* (auto, one, two); the *column divider*, set by clicking on a page (kept separately for odd and even pages, since margins mirror; the dashed lines on every page show where the columns were found to divide, a solid one where it was set); *margins to leave out* as percentages of the page, shaded on the pages, for running heads, page numbers and chapter tabs. Settings are stored per PDF with the style corrections.
+- **Scans:** a page that draws text invisibly (the recognised text OCR lays over a scan) is reported in the status line and the Layout panel, since positions and fonts are then only approximate. When half the pages do, scan mode turns itself on. There is still no OCR of PDFs without a text layer.
+- `npm run pdf:reflow -- book.pdf --layout layout.json` takes the same layout as JSON, for tuning without the browser.
+
+## Working with PDFs of different quality
+
+What the reflow can rely on depends on how the PDF was made:
+
+| Kind | What the text layer gives | What goes wrong | What helps |
+|---|---|---|---|
+| Born digital, from a layout program (most publishers since ~2000) | Exact positions, real font names, sizes | Only layout quirks: crop boxes, mirrored margins, tabs, text wrapped round art, three columns, sidebars | The automatic rules, with the Layout and Headings panels for the quirks |
+| Born digital, exported from a word processor | Exact positions, but fewer distinct fonts (headings are the body face in bold) | Headings not told from text; bold lead-ins taken for headings | Headings panel; a "bold body text at this size is a heading" rule would help |
+| Scanned with OCR (older books, DriveThruRPG scans) | Approximate positions, one generic font, sizes vary line to line, text invisible | Styles meaningless so no headings; baselines jitter so lines split or merge; columns found, but tables and hanging indents unreliable | Layout panel for the columns and margins; Headings by hand; a looser baseline tolerance when the page is flagged as scanned |
+| Scanned without OCR | Nothing | Nothing to reflow | OCR would be needed (Tesseract in the browser is possible but slow and large) |
+| Image-heavy (maps, handouts) | Little text | Pictures left out as backgrounds, or panels taken for pictures | Clip the page as an image instead |
+
+Ideas, roughly in order of value, and where they stand:
+
+1. ~~**Per-page overrides.**~~ Done in 0.8.0: the layout menu on each page marker.
+2. ~~**Draw a region to read, or to skip.**~~ Done in 0.8.0: **Mark area**.
+3. ~~**Fix a page by hand, keep it.**~~ Done in 0.8.0: **Edit text**.
+4. ~~**Three columns and sidebars.**~~ Done in 0.8.0; boxed panels read as their own unit in 0.9.0.
+5. ~~**Text wrapped round art.**~~ Done in 0.9.0.
+6. ~~**Scanned books.**~~ Done in 0.8.0 (scan mode); lines in capitals as headings in 0.9.0.
+7. ~~**Word-processor exports.**~~ Done in 0.9.0.
+8. ~~**Search across the book.**~~ Done in 0.9.0, in the Contents panel.
+9. ~~**Reading-order check.**~~ Done in 0.9.0, in the Layout panel.
+10. **OCR fallback** for PDFs with no text layer at all, as an opt-in that runs page by page. Not started: Tesseract in the browser needs its WebAssembly engine and a language model (about 15 MB for English) in the extension, or downloaded on first use, and takes seconds a page. Worth it only if image-only PDFs turn up often.
+
+## Reading fixes, search and reading order (done, 0.9.0)
+
+The rest of the ideas above, and the known gaps that could be fixed.
+
+- **Text wrapped round a picture** (`continues` in `src/pdf/reflow.ts`): a line that stops short with a kept picture beside it on the right, or starts after one on the left, counts as a full line, so a sentence ending there no longer ends the paragraph. A picture met while a paragraph is open is put after the paragraph rather than splitting it.
+- **A paragraph cut off by a table, a picture or a marked area across the page, or by a sidebar**, carries on after it: the paragraph is kept when it stopped mid-sentence, and the first line of text after the interruption (on the same side of any sidebar) joins it when it starts in lower case and lines up as a next column's line would. The paragraph keeps its place before the table. Anything else (a heading, a list, a new paragraph) lets it go.
+- **Coloured panels** (boxed text, a sidebar on a tint, a stat block on a panel) are read as a unit, like a marked area: the outermost tinted shape (not white or black, at least 80pt wide and three lines high, under 40% of the page) whose text stays inside it, holding at least two lines but not most of the page. Its text is taken out before the page's columns are found and read where the panel sits, in its own columns if it has them (two lines make a column in a panel). Its paragraphs stay boxed.
+- **Lines in capitals** are headings in scan mode (one level below the smallest found by size), when short, with a word of four letters or more and no closing comma or full stop: "THE SUNKEN TEMPLE", not "STR DEX CON".
+- **Word-processor exports:** a heading style now only takes lines set mostly in it, so marking bold body text as a heading leaves bold lead-ins ("**Note.** …") as text. Where a book has fewer than two heading sizes, a bold style in the body face and size is a heading by itself when at least three of its lines, and 60% of them, are short lines wholly in it that don't end a sentence.
+- **Search:** the Contents panel's box also searches the whole text once three letters are typed: up to 200 places, each with the words around it and its page, every match marked in the text (CSS custom highlights, so the text and what is clipped are untouched). Enter goes to the first.
+- **Reading order:** **Layout → Show the reading order on the pages** numbers each block on the pages in reading order, with an outline round each run of its lines, so a wrong order shows at a glance.
+
 ## Later
 
-- Searching the whole book.
-- Keeping a paragraph together across a full-width block or a sidebar.
+- OCR for PDFs with no text layer (above).

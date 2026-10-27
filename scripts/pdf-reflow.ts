@@ -2,14 +2,15 @@
  * Prototype for the PDF reader: reflows a PDF into clean HTML and writes a side-by-side page
  * (original page on the left, reflowed text on the right) for checking the result.
  *
- *   npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json]
+ *   npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--layout layout.json]
  *                         [--page-settings settings.json] [--scan | --no-scan] [--json]
  *
  * Writes <out-dir>/index.html with the reflowed text and extracted images. The page renders on the
  * left need poppler's `pdftoppm`; without it only the reflowed text is shown. `--json` also writes
  * the raw extraction (pages.json) for debugging the reflow rules.
  *
- * `--page-settings` takes what the reader keeps per PDF: `{ "layouts": { "3": "three" }, "regions":
+ * `--layout` takes the book's layout (columns, divider, margins) and `--page-settings` the rest of
+ * what the reader keeps per PDF: `{ "layouts": { "3": "three" }, "regions":
  * [{ "page": 5, "kind": "table", "x0": 50, "y0": 218, "x1": 200, "y1": 285 }], "scan": true }`
  * (PDF points from the top left). `--scan` and `--no-scan` turn scan mode on or off.
  */
@@ -36,9 +37,10 @@ const scan = has('--scan') ? true : has('--no-scan') ? false : undefined
 const pageSettings = flag('--page-settings')
 const range = flag('--pages')
 const styles = flag('--styles')
+const layout = flag('--layout')
 const [file, outArg] = args
 if (!file) {
-  console.error('Usage: npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--page-settings settings.json] [--scan | --no-scan] [--json]')
+  console.error('Usage: npm run pdf:reflow -- <file.pdf> [out-dir] [--pages 3-9] [--styles overrides.json] [--layout layout.json] [--page-settings settings.json] [--scan | --no-scan] [--json]')
   process.exit(1)
 }
 const out = outArg ?? `dist/pdf-reflow/${basename(file, '.pdf')}`
@@ -67,12 +69,15 @@ for (const image of pickImages(pages)) {
   imageFiles.set(`${image.page}:${image.id}`, name)
 }
 
+// --layout takes the reader's Layout as JSON: {"columns": 2, "divider": {"odd": 0.48}, "margins": {"right": 0.1}}.
 const options: ReflowOptions = {
   ...(pageSettings ? JSON.parse(await readFile(pageSettings, 'utf8')) as Pick<ReflowOptions, 'layouts' | 'regions' | 'scan'> : {}),
   ...(styles ? { styles: JSON.parse(await readFile(styles, 'utf8')) as ReflowOptions['styles'] } : {}),
+  ...(layout ? { layout: JSON.parse(await readFile(layout, 'utf8')) as ReflowOptions['layout'] } : {}),
   ...(scan === undefined ? {} : { scan }),
 }
 const result = reflow(pages, options)
+if (result.scanned.length) console.warn(`${result.scanned.length} page(s) carry invisible (OCR) text: the layout is only approximate.`)
 
 let pageImages: Map<number, string> | undefined
 try {
