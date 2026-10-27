@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
-import { pickImages, reflow, type ReflowBlock } from '../src/pdf/reflow.js'
+import { looksScanned, pickImages, reflow, type ReflowBlock } from '../src/pdf/reflow.js'
 import type { PageContent, PdfText } from '../src/pdf/types.js'
 
 // A letter-sized page laid out like a D&D book: 10pt body text in two columns (54–297 and 315–558).
@@ -14,9 +15,12 @@ const bold = (str: string, x: number, y: number, size = 10) => t(str, x, y, { fo
 const page = (number: number, text: PdfText[], extra: Partial<PageContent> = {}): PageContent => ({ number, width: W, height: H, text, shapes: [], images: [], ...extra })
 
 /** Lines of filler body text down one column, each reaching the column's right edge. */
-function column(x: number, y: number, lines: string[]): PdfText[] {
-  return lines.map((s, i) => ({ ...t(s, x, y + i * 12), w: 243 }))
+function column(x: number, y: number, lines: string[], w = 243): PdfText[] {
+  return lines.map((s, i) => ({ ...t(s, x, y + i * 12), w }))
 }
+
+/** n lines named prefix1…prefixn, the last ending a sentence. */
+const filler = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}${i === n - 1 ? ' end.' : ''}`)
 
 /** Runs set one after another on a line, starting at x. */
 function line(x: number, y: number, runs: PdfText[]): PdfText[] {
@@ -118,6 +122,176 @@ describe('reflow: structure', () => {
       ...column(54, 500, ['body text', 'body text', 'body text']),
     ])]
     assert.equal(plain(reflow(pages).blocks[0]!), 'Hired by the Seekers')
+  })
+})
+
+describe('reflow: layouts', () => {
+  // Three columns, 54–210, 228–384 and 402–558.
+  const threeColumns = (n: number) => page(n, [
+    ...column(54, 100, filler('a', 10), 156),
+    ...column(228, 100, filler('b', 10), 156),
+    ...column(402, 100, filler('c', 10), 156),
+  ])
+
+  it('reads three columns left to right', () => {
+    const result = reflow([threeColumns(1)])
+    assert.deepEqual(result.blocks.map(plain), ['a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 end.', 'b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 end.', 'c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 end.'])
+    assert.deepEqual(result.layouts, [{ page: 1, columns: 3, sidebar: false, layout: 'auto' }])
+  })
+
+  it('finds three columns on one page of a two-column book', () => {
+    const two = (n: number) => page(n, [...column(54, 100, filler(`l${n}-`, 12)), ...column(315, 100, filler(`r${n}-`, 12))])
+    const result = reflow([two(1), threeColumns(2), two(3)])
+    assert.deepEqual(result.layouts.map((l) => l.columns), [2, 3, 2])
+    assert.deepEqual(result.blocks.filter((b) => b.page === 2).map((b) => plain(b).slice(0, 2)), ['a1', 'b1', 'c1'])
+  })
+
+  it('reads a sidebar after the main text, and never runs the main text into it', () => {
+    const pages = [page(1, [
+      ...column(54, 100, ['Sidebar: the town', 'of Hommlet has', 'a mill, an inn', 'and a temple.', 'Its people are', 'wary of strangers.'], 120),
+      ...column(200, 100, ['The main text runs', 'down the wide column', 'for a good many lines', 'and keeps going on', 'until the page ends', 'in the middle of a', 'sentence that carries'], 358),
+    ])]
+    const result = reflow(pages)
+    assert.deepEqual(result.layouts[0], { page: 1, columns: 2, sidebar: true, layout: 'auto' })
+    assert.deepEqual(result.blocks.map(plain), [
+      'The main text runs down the wide column for a good many lines and keeps going on until the page ends in the middle of a sentence that carries',
+      'Sidebar: the town of Hommlet has a mill, an inn and a temple. Its people are wary of strangers.',
+    ])
+  })
+
+  it('takes a layout set by hand', () => {
+    // Too few lines in each column for the columns to be found.
+    const pages = [page(1, [...column(54, 100, ['left one', 'left two', 'left three.']), ...column(315, 100, ['right one', 'right two', 'right three.'])])]
+    assert.equal(reflow(pages).blocks[0]?.type, 'table')
+    const result = reflow(pages, { layouts: { 1: 'two' } })
+    assert.deepEqual(result.blocks.map(plain), ['left one left two left three.', 'right one right two right three.'])
+    assert.equal(result.layouts[0]?.layout, 'two')
+    const sidebar = reflow([page(1, [...column(54, 100, ['side one', 'side two'], 100), ...column(200, 100, ['main one', 'main two'], 358)])], { layouts: { 1: 'sidebar' } })
+    assert.deepEqual(sidebar.blocks.map(plain), ['main one main two', 'side one side two'])
+    const one = reflow([threeColumns(1)], { layouts: { 1: 'one' } })
+    assert.equal(one.layouts[0]?.columns, 1)
+  })
+})
+
+describe('reflow: marked areas', () => {
+  it('leaves out a skipped area', () => {
+    const pages = [page(1, [...column(54, 100, ['Keep this line.', 'Credits: the art team.', 'And this one.'])])]
+    const blocks = reflow(pages, { regions: [{ page: 1, kind: 'skip', x0: 50, y0: 104, x1: 300, y1: 114 }] }).blocks
+    assert.deepEqual(blocks.map(plain), ['Keep this line.', 'And this one.'])
+  })
+
+  it('reads a marked area as one block, in its place', () => {
+    // Centred lines of a letter, which would otherwise split oddly.
+    const pages = [page(1, [
+      { ...t('Before the letter.', 54, 80), w: 243 },
+      t('Dear Lord Wyvern,', 120, 120), t('come at once to', 140, 132), t('the old mill.', 150, 144), t('Signed, a friend.', 125, 168),
+      { ...t('After the letter.', 54, 220), w: 243 },
+    ])]
+    const blocks = reflow(pages, { regions: [{ page: 1, kind: 'block', x0: 100, y0: 105, x1: 260, y1: 175 }] }).blocks
+    assert.deepEqual(blocks.map(plain), ['Before the letter.', 'Dear Lord Wyvern, come at once to the old mill. Signed, a friend.', 'After the letter.'])
+  })
+
+  it('reads a marked area as a table, with wrapped cells', () => {
+    // Cells set closer together than the gap that normally splits a table's cells.
+    const cell = (s: string, x: number, y: number) => t(s, x, y)
+    const pages = [page(1, [
+      bold('d6', 60, 100), bold('Encounter', 80, 100),
+      cell('1', 60, 112), cell('A lost goblin', 80, 112),
+      cell('looking for home', 80, 124),
+      cell('2', 60, 136), cell('Two wolves', 80, 136),
+    ])]
+    const [table] = reflow(pages, { regions: [{ page: 1, kind: 'table', x0: 50, y0: 85, x1: 300, y1: 140 }] }).blocks
+    assert.equal(table?.type, 'table')
+    if (table?.type !== 'table') return
+    assert.equal(table.header, true)
+    assert.deepEqual(table.rows.map((r) => r.map((c) => c.map((x) => x.text).join(''))), [['d6', 'Encounter'], ['1', 'A lost goblin looking for home'], ['2', 'Two wolves']])
+  })
+})
+
+describe('reflow: scan mode', () => {
+  // OCR text: one font for everything, and every word at its own height and size.
+  const jitter = [0.6, -0.5, 0.3, -0.8, 0.7, -0.2, 0.5, -0.6]
+  const ocrLine = (words: string[], x: number, y: number, size: number, k: number): PdfText[] => words.map((w, i) => {
+    const s = size * (1 + jitter[(i + k) % jitter.length]! * 0.04)
+    const item = { ...t(w, x, y + jitter[(i * 3 + k) % jitter.length]! * size * 0.08, { size: s, font: 'Times' }), w: w.length * s * 0.45 }
+    x += item.w + size * 0.3
+    return item
+  })
+  const scanned = page(1, [
+    ...ocrLine(['The', 'Old', 'Mill'], 54, 80, 18, 0),
+    ...['the miller has gone', 'missing and nobody in', 'the village will say', 'where he went.'].flatMap((l, i) => ocrLine(l.split(' '), 54, 110 + i * 12, 10, i + 1)),
+    ...ocrLine(['The', 'Inn'], 54, 190, 18, 5),
+    ...['the inn is warm and', 'the beer is cheap.'].flatMap((l, i) => ocrLine(l.split(' '), 54, 220 + i * 12, 10, i + 2)),
+  ])
+
+  it('is spotted, and joins jittery words into lines and headings by size alone', () => {
+    assert.equal(looksScanned([scanned]), true)
+    const result = reflow([scanned])
+    assert.equal(result.scan, true)
+    assert.deepEqual(result.blocks.map((b) => `${b.type === 'heading' ? `h${b.level}` : b.type}: ${plain(b)}`), [
+      'h1: The Old Mill',
+      'paragraph: the miller has gone missing and nobody in the village will say where he went.',
+      'h1: The Inn',
+      'paragraph: the inn is warm and the beer is cheap.',
+    ])
+  })
+
+  it('is not used for typeset text unless asked for', () => {
+    const typeset = [page(1, [t('Title', 54, 60, { size: 24, font: 'Display' }), ...column(54, 100, filler('x', 50))])]
+    assert.equal(looksScanned(typeset), false)
+    assert.equal(reflow(typeset).scan, false)
+    assert.equal(reflow([scanned], { scan: false }).scan, false)
+  })
+})
+
+describe('reflow: sample PDFs read with pdf.js', () => {
+  // Made by test/fixtures/make-layouts-pdf.py.
+  const read = async (name: string) => {
+    const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const { extractPage } = await import('../src/pdf/extract.js')
+    const data = new Uint8Array(await readFile(new URL(`fixtures/${name}`, import.meta.url)))
+    const doc = await getDocument({ data, fontExtraProperties: true, disableFontFace: true, verbosity: 0 }).promise
+    const pages: PageContent[] = []
+    for (let n = 1; n <= doc.numPages; n++) pages.push(await extractPage(await doc.getPage(n), OPS as unknown as Record<string, number>))
+    await doc.cleanup()
+    return pages
+  }
+
+  it('finds two columns, three columns and a sidebar, page by page', async () => {
+    const pages = await read('layouts.pdf')
+    const result = reflow(pages)
+    assert.equal(result.scan, false)
+    assert.deepEqual(result.layouts.map((l) => `${l.columns}${l.sidebar ? '+sidebar' : ''}`), ['2', '2', '3', '2+sidebar', '1'])
+    const page1 = result.blocks.filter((b) => b.page === 1)
+    assert.ok(page1.some((b) => /the travellers keep on walking until nightfall\.$/.test(plain(b))), 'a paragraph carries on into the next column')
+    // The sidebar comes after the main text.
+    const page4 = result.blocks.filter((b) => b.page === 4).map(plain)
+    assert.equal(page4.indexOf('Village Notes'), page4.length - 2)
+    assert.ok(result.blocks.some((b) => b.type === 'statblock' && b.name === 'Goblin Boss'))
+  })
+
+  it('reads marked areas and set layouts', async () => {
+    const pages = await read('layouts.pdf')
+    const result = reflow(pages, {
+      layouts: { 3: 'one' },
+      regions: [
+        { page: 5, kind: 'block', x0: 100, y0: 105, x1: 512, y1: 190 },
+        { page: 5, kind: 'table', x0: 50, y0: 218, x1: 200, y1: 285 },
+        { page: 5, kind: 'skip', x0: 50, y0: 55, x1: 300, y1: 75 },
+      ],
+    })
+    assert.equal(result.layouts[2]?.columns, 1)
+    const page5 = result.blocks.filter((b) => b.page === 5)
+    assert.deepEqual(page5.slice(0, 2).map(plain), ['My dear Lord Wyvern, come at once to the old mill, for the miller has seen the thing in the river again. Your friend, Ostler Gundigoot', 'table'])
+    const table = page5[1]
+    assert.deepEqual(table?.type === 'table' && table.rows.map((r) => r.map((c) => c.map((x) => x.text).join(''))), [['d6', 'Encounter'], ['1', 'A lost goblin'], ['2', 'Two wolves'], ['3', 'A hungry bear']])
+  })
+
+  it('spots a scan and finds its headings by size', async () => {
+    const result = reflow(await read('scanned.pdf'))
+    assert.equal(result.scan, true)
+    assert.deepEqual(result.blocks.map((b) => b.type), ['heading', 'paragraph', 'heading', 'paragraph', 'heading', 'paragraph'])
+    assert.deepEqual(result.blocks.filter((b) => b.type === 'heading').map(plain), ['Chapter 1', 'Chapter 2', 'Chapter 3'])
   })
 })
 

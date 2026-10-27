@@ -34,6 +34,8 @@ button { padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line); b
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 button.link { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; }
+button.small { padding: 2px 8px; font-size: 11px; }
+button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 button:focus-visible, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
@@ -53,10 +55,29 @@ main.with-styles { grid-template-columns: 1fr 1fr 320px; }
 .page-number { position: absolute; left: -2px; top: 4px; transform: translateX(-100%); color: var(--muted); font-size: 11px; padding-right: 6px; }
 .hl { position: absolute; background: var(--hl); outline: 1px solid var(--hl-line); pointer-events: none; }
 
+/* Areas marked by hand */
+#pages.marking .page { cursor: crosshair; }
+.drawing { position: absolute; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
+.region { position: absolute; border: 2px solid var(--region); background: color-mix(in srgb, var(--region) 12%, transparent); pointer-events: none; }
+.region-block { --region: #2f6fb3; }
+.region-table { --region: #2e8b57; }
+.region-skip { --region: #8a8a8a; background: repeating-linear-gradient(45deg, rgba(128, 128, 128, .18) 0 6px, transparent 6px 12px); }
+.region-label { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 4px; padding: 1px 2px 1px 6px; background: var(--region); color: #fff; font-size: 10px; font-weight: 600; border-radius: 0 0 4px 0; white-space: nowrap; pointer-events: auto; cursor: default; }
+.region-label button { padding: 0 5px; border: 0; background: none; color: inherit; font-size: 12px; line-height: 1.2; }
+.region-label button:hover { background: rgba(255, 255, 255, .25); }
+.region-menu { position: absolute; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .2); cursor: default; }
+.region-menu button { padding: 4px 8px; }
+
 /* Reflowed text */
 #flow { max-width: 70ch; margin: 0 auto; font: 15px/1.6 Georgia, "Times New Roman", serif; }
 #flow > :first-child { margin-top: 0; }
-.page-marker { font: 600 11px/1 system-ui, sans-serif; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; border-top: 1px solid var(--line); padding-top: 8px; margin: 28px 0 8px; user-select: none; }
+.page-marker { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font: 600 11px/1 system-ui, sans-serif; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; border-top: 1px solid var(--line); padding-top: 8px; margin: 28px 0 8px; user-select: none; }
+.page-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.page-tools select { padding: 1px 4px; font-size: 11px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+.page-tools button.link { font-size: 11px; }
+.page-tools .edited { color: var(--accent); font-weight: 600; }
+.page-text.editing { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 2px; }
+.page-text.editing:focus { outline-style: solid; }
 #flow h1, #flow h2, #flow h3, #flow h4 { font-family: system-ui, sans-serif; color: var(--accent); line-height: 1.25; margin: 1.2em 0 .4em; }
 #flow h1 { font-size: 1.9em; } #flow h2 { font-size: 1.45em; } #flow h3 { font-size: 1.2em; } #flow h4 { font-size: 1.05em; }
 #flow blockquote { margin: 1em 0; padding: .6em 1em; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-left: 3px solid var(--accent); }
@@ -81,6 +102,8 @@ main.with-styles { grid-template-columns: 1fr 1fr 320px; }
 #styles .style-key { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
 #styles .style.changed .style-key::after { content: " · corrected"; color: var(--accent); }
 #styles select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+#styles .scan-mode { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 14px; padding: 0 0 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+#styles .scan-mode input { margin-top: 2px; }
 
 /* Opening a file */
 .drop { position: fixed; inset: 49px 0 0; display: grid; place-items: center; background: var(--bg); }

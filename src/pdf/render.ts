@@ -12,6 +12,10 @@ export interface RenderOptions {
 export interface HtmlOptions {
   /** The label of the button on each stat block. */
   statblockButton?: string
+  /** Puts each page's text in a `<div class="page-text" data-page="n">` after its marker. */
+  wrapPages?: boolean
+  /** A page's text as edited by hand, which replaces its reflowed blocks. Needs `wrapPages`. */
+  pageHtml?: (page: number) => string | undefined
 }
 
 /**
@@ -21,12 +25,24 @@ export interface HtmlOptions {
  */
 export function blocksToHtml(blocks: ReflowBlock[], imageSrc: RenderOptions['imageSrc'], options: HtmlOptions = {}): string {
   const out: string[] = []
+  const edited = new Set<number>()
   let page = 0
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i]!
+    if (edited.has(b.page)) continue
     if (b.page !== page) {
+      if (options.wrapPages && page) out.push('</div>')
       page = b.page
       out.push(`<div class="page-marker" data-page="${page}">Page ${page}</div>`)
+      if (options.wrapPages) {
+        out.push(`<div class="page-text" data-page="${page}">`)
+        const html = options.pageHtml?.(page)
+        if (html !== undefined) {
+          out.push(html)
+          edited.add(page)
+          continue
+        }
+      }
     }
     if (b.type === 'paragraph' && b.list) {
       const items: string[] = []
@@ -41,6 +57,7 @@ export function blocksToHtml(blocks: ReflowBlock[], imageSrc: RenderOptions['ima
     }
     out.push(blockHtml(b, imageSrc, options))
   }
+  if (options.wrapPages && page) out.push('</div>')
   return out.join('\n')
 }
 
@@ -63,7 +80,7 @@ function blockHtml(b: ReflowBlock, imageSrc: RenderOptions['imageSrc'], options:
       return src === undefined ? '' : `<figure${attrs(b)}><img${src ? ` src="${esc(src)}"` : ''} data-pdf-image="${b.page}:${esc(b.id)}" alt="" width="${b.width}" height="${b.height}"></figure>`
     }
     case 'statblock': {
-      const inner = blocksToHtml(b.blocks, imageSrc, options).replace(/<div class="page-marker"[^>]*>.*?<\/div>\n?/g, '')
+      const inner = blocksToHtml(b.blocks, imageSrc, { ...options, wrapPages: false }).replace(/<div class="page-marker"[^>]*>.*?<\/div>\n?/g, '')
       const label = options.statblockButton ?? 'Select stat block'
       return `<section class="statblock"${attrs(b)}><button type="button" class="clip-statblock" title="${esc(label)}">${esc(label)}</button>${inner}</section>`
     }

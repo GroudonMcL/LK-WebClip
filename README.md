@@ -41,6 +41,11 @@ A lightweight Chrome extension for [LegendKeeper](https://www.legendkeeper.com).
   - The original pages are on the left and a clean copy of the text on the right, with two-column pages put back into reading order. Hover over or click a paragraph to see where it is on the page; click a page to find its text.
   - Select text and right-click **Send to LegendKeeper** (or click **Send selection**). Each stat block has its own **Send to LegendKeeper** button. Clipping with nothing selected takes the PDF page in view. Images go along and are copied into your asset library. The Source defaults to the book's title.
   - **Headings** lists the PDF's text styles. If a heading came out as plain text (or the other way round), change its style there; corrections are remembered for that PDF.
+  - Three-column pages and sidebars are found by themselves; a sidebar is read after the rest of its page. If a page is read wrongly, pick its layout from the menu on its page marker (one, two or three columns, or text and sidebar).
+  - **Mark area**, then drag a rectangle on a page, to read that part as one block (a letter, credits), leave it out, or read it as a table. Remove an area with its **×**.
+  - **Edit text** on a page marker lets you fix that page's text in place. The edit is kept for that PDF, used when you clip, and can be undone.
+  - Scanned books with OCR text are read in scan mode: headings are found from their size, and uneven lines are joined. Turn it on or off under **Headings → Scanned book**.
+  - Layouts, areas, edits and scan mode are remembered for that PDF.
   - To open PDFs saved on your computer from their tab, turn on **Allow access to file URLs** on the extension's details page in `chrome://extensions`. Dropping the file on the reader works without it.
 
 Then in the panel:
